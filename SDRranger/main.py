@@ -1,9 +1,9 @@
 """
-gtTapSeq: Processing Genomic-Transcriptomic TAP-Seq data.
+SDRranger: Processing Genomic-Transcriptomic TAP-Seq data.
 
 Usage:
-  gtTapSeq count_gDNA       <bc_fastq_file> <paired_fastq_file> [--barcode-whitelist=<barcode_whitelist>] [--max-bc-err-decode=<max_bc_err_decode>] [--output-dir=<output_dir>] [-v | -vv | -vvv]
-  gtTapSeq count_RNA        <bc_fastq_file> <paired_fastq_file> [--barcode-whitelist=<barcode_whitelist>] [--max-bc-err-decode=<max_bc_err_decode>] [--sample-barcode-whitelist=<sample_barcode_whitelist>] [--max-sbc-err-decode=<max_sbc_err_decode>] [--sbc-reject-delta=<sbc_reject_delta>] [--output-dir=<output_dir>] [-v | -vv | -vvv]
+  SDRranger count_gDNA       <bc_fastq_file> <paired_fastq_file> [--barcode-whitelist=<barcode_whitelist>] [--max-bc-err-decode=<max_bc_err_decode>] [--output-dir=<output_dir>] [-v | -vv | -vvv]
+  SDRranger count_RNA        <bc_fastq_file> <paired_fastq_file> [--barcode-whitelist=<barcode_whitelist>] [--max-bc-err-decode=<max_bc_err_decode>] [--sample-barcode-whitelist=<sample_barcode_whitelist>] [--max-sbc-err-decode=<max_sbc_err_decode>] [--sbc-reject-delta=<sbc_reject_delta>] [--output-dir=<output_dir>] [-v | -vv | -vvv]
 
 Options:
   -h --help     Show this screen.
