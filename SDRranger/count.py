@@ -96,7 +96,7 @@ def bc_and_sbc_counter_from_fastq(bc_fastq_fpath, bc_parser):
 
 
 
-def process_gDNA_fastq(arguments):
+def process_gDNA_fastqs(arguments):
     aligners = [CustomBCAligner('N'*9, cso, 'N'*9, commonseq2_gDNA) for cso in commonseq1_options]
     with open(out_fpath, 'w') as out:
         for rec in SeqIO.parse(gzip_friendly_open(bc_fastq_fpath), 'fastq'):

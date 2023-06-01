@@ -18,8 +18,7 @@ import os
 from docopt import docopt
 from .__init__ import __version__
 from .config import CommandLineArguments
-from .decode import decode_fastqs, build_decoder 
-from .discover import discover_bcs_main
+from .count import process_RNA_fastqs, process_gDNA_fastqs 
 
 
 def main(**kwargs):
@@ -35,8 +34,8 @@ def main(**kwargs):
     log.debug(docopt_args)
 
     commands = {
-        'count_gDNA': count_gDNA,
-        'count_RNA': count_RNA,
+        'count_gDNA': process_gDNA_fastqs,
+        'count_RNA': process_RNA_fastqs,
     }
 
     commands[arguments.command](arguments)
