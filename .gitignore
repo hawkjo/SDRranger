@@ -1,0 +1,7 @@
+*pyc
+*swp
+*pkl
+envSDRranger
+build
+dist
+SDRranger.egg-info
