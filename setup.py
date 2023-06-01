@@ -40,7 +40,7 @@ if __name__ == '__main__':
         zip_safe=False,
         author='John Hawkins',
         author_email='hawkjo@gmail.com',
-        description='Processing of Genomic-Transcriptomic TAP-Seq data',
+        description='A tool for processing Single-cell DNA and RNA sequencing data.',
         url='https://github.com/hawkjo/SDRranger',
         download_url='',
         keywords=['DNA', 'NGS', 'bioinformatics', 'TAP-Seq', 'multiomics'],
