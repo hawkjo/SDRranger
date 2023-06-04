@@ -1,6 +1,7 @@
-import os
-import numpy as np
 import logging
+import os
+import pysam
+import numpy as np
 from Bio import SeqIO
 from collections import Counter, defaultdict
 from .bc_aligner import CustomBCAligner
@@ -14,6 +15,17 @@ commonseq1_options = ['GTCAGTACGTACGAGTC'[i:] for i in range(4)]
 commonseq2_RNA = 'GTACTCGCAGTAGTCGACACGTC'
 commonseq2_gDNA = 'GTACTCGCAGTAGTC'
 
+def RNA_paired_recs_iterator(bc_fastq_fpath, p_bam_fpath):
+    """
+    Iterates bc fastq reads with matching paired bam records.
+    """
+    def reads_match(r1, r2):
+        return all(c1 == c2 or set(c1, c2) == set('12') for c1, c2 in zip(r1, r2)))
+    bc_fq_iter = iter(SeqIO.parse(open(bc_fastq_fpath), 'fastq'))
+    for p_read in pysam.AlignmentFile(p_bam_fpath).fetch():
+        bc_rec = next(rec in bc_fq_iter if reads_match(str(rec.id), str(p_read.qname)))
+        yield bc_rec, p_read
+
 def process_RNA_fastqs(arguments):
     """
     Output single file with parsed bcs from bc_fastq in read names and seqs from paired_fastq.
@@ -24,14 +36,15 @@ def process_RNA_fastqs(arguments):
     if not os.path.exists(arguments.output_dir):
         os.makedirs(arguments.output_dir)
     out_fpath = os.path.join(arguments.output_dir, out_fname)
+    if os.path.exists(out_fpath):
+        raise ValueError(f'File already exists: {out_fpath}')
 
     log.info('Building aligners and barcode decoders')
     aligners = [CustomBCAligner('N'*9, cso, 'N'*9, commonseq2_RNA, 'N'*8, 'N'*8) for cso in commonseq1_options]
     bcd = BCDecoder(arguments.barcode_whitelist, arguments.max_bc_err_decode)
     sbcd = SBCDecoder(arguments.sample_barcode_whitelist, arguments.max_sbc_err_decode, arguments.sbc_reject_delta)
+
     def parse_recs(bc_rec, p_rec):
-        if not all(c1 == c2 or set(c1, c2) == set('12') for c1, c2 in zip(str(bc_rec.id), str(p_rec.id))):
-            raise ValueError('Non-matching records:\n{bc_rec.id}\n{p_rec.id}')
         bc_seq = str(bc_rec.seq)
         scores_and_pieces = [al.find_norm_score_and_pieces(bc_seq) for al in aligners]
         raw_score, raw_pieces = max(scores_and_pieces)
