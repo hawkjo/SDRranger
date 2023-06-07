@@ -4,6 +4,7 @@ import pysam
 import numpy as np
 from Bio import SeqIO
 from collections import Counter, defaultdict
+#from multiprocessing import Pool
 from .bc_aligner import CustomBCAligner
 from .bc_decoders import BCDecoder, SBCDecoder
 from .misc import gzip_friendly_open
@@ -20,10 +21,10 @@ def RNA_paired_recs_iterator(bc_fastq_fpath, p_bam_fpath):
     Iterates bc fastq reads with matching paired bam records.
     """
     def reads_match(r1, r2):
-        return all(c1 == c2 or set(c1, c2) == set('12') for c1, c2 in zip(r1, r2)))
-    bc_fq_iter = iter(SeqIO.parse(open(bc_fastq_fpath), 'fastq'))
-    for p_read in pysam.AlignmentFile(p_bam_fpath).fetch():
-        bc_rec = next(rec in bc_fq_iter if reads_match(str(rec.id), str(p_read.qname)))
+        return all(c1 == c2 or set([c1, c2]) == set('12') for c1, c2 in zip(r1, r2))
+    bc_fq_iter = iter(SeqIO.parse(gzip_friendly_open(bc_fastq_fpath), 'fastq'))
+    for p_read in pysam.AlignmentFile(p_bam_fpath).fetch(until_eof=True):
+        bc_rec = next(rec for rec in bc_fq_iter if reads_match(str(rec.id), str(p_read.qname)))
         yield bc_rec, p_read
 
 def process_RNA_fastqs(arguments):
@@ -32,19 +33,17 @@ def process_RNA_fastqs(arguments):
     """
     paired_fpath = arguments.paired_fastq_file
     paired_bname = os.path.splitext(paired_fpath[:-3] if paired_fpath.endswith('.gz') else paired_fpath)[0]
-    out_fname = f'{os.path.basename(paired_bname)}_parsed.fq'
+    out_fname = f'{os.path.basename(paired_bname)}_parsed.bam'
     if not os.path.exists(arguments.output_dir):
         os.makedirs(arguments.output_dir)
     out_fpath = os.path.join(arguments.output_dir, out_fname)
-    if os.path.exists(out_fpath):
-        raise ValueError(f'File already exists: {out_fpath}')
 
     log.info('Building aligners and barcode decoders')
     aligners = [CustomBCAligner('N'*9, cso, 'N'*9, commonseq2_RNA, 'N'*8, 'N'*8) for cso in commonseq1_options]
     bcd = BCDecoder(arguments.barcode_whitelist, arguments.max_bc_err_decode)
     sbcd = SBCDecoder(arguments.sample_barcode_whitelist, arguments.max_sbc_err_decode, arguments.sbc_reject_delta)
 
-    def parse_recs(bc_rec, p_rec):
+    def process_bc_rec_and_p_read(bc_rec, p_read):
         bc_seq = str(bc_rec.seq)
         scores_and_pieces = [al.find_norm_score_and_pieces(bc_seq) for al in aligners]
         raw_score, raw_pieces = max(scores_and_pieces)
@@ -61,15 +60,20 @@ def process_RNA_fastqs(arguments):
 
         new_aligner = CustomBCAligner(*corrected_pieces, 'N'*8)
         new_score, new_pieces = new_aligner.find_norm_score_and_pieces(bc_seq)
-        corrected_pieces.append(new_pieces[-1])
 
-        raw_pieces_str = ':'.join(raw_pieces)
-        corrected_pieces_str = ':'.join(corrected_pieces)
-        name = f'{corrected_pieces_str}/{new_score:.2f}/{raw_pieces_str}/{raw_score:.2f}/{bc_rec.id}'
-        p_rec.id = name
-        p_rec.name = name
-        p_rec.description = ''
-        return raw_score, p_rec
+        # Add tags for corrected and raw:
+        # Cell barcode
+        p_read.setTag('CB', bc1 + bc2)
+        p_read.setTag('CR', raw_pieces[0] + raw_pieces[2])
+        # Sample barcode
+        p_read.setTag('SB', sbc)
+        p_read.setTag('SR', raw_pieces[4])
+        # Filler sequences
+        p_read.setTag('FB', commonseq1 + commonseq2)
+        p_read.setTag('FR', raw_pieces[1] + raw_pieces[3])
+        # And raw UMI
+        p_read.setTag('UR', new_pieces[-1])
+        return raw_score, p_read
 
     log.info('Processing fastqs:')
     log.info(f'  barcode fastq: {arguments.bc_fastq_file}')
@@ -78,37 +82,50 @@ def process_RNA_fastqs(arguments):
     log.info(f'  {out_fpath}')
 
     n_first_seqs = 1000
-    with open(out_fpath, 'w') as out:
+    with pysam.AlignmentFile(out_fpath, 'wb', template=pysam.AlignmentFile(arguments.paired_fastq_file)) as out:
         log.info(f'Processing first {n_first_seqs:,d} for score threshold...')
-        first_scores_and_recs = []
-        for i, (bc_rec, p_rec) in enumerate(zip(
-            SeqIO.parse(gzip_friendly_open(arguments.bc_fastq_file), 'fastq'),
-            SeqIO.parse(gzip_friendly_open(arguments.paired_fastq_file), 'fastq')
-            )):
-            first_scores_and_recs.append(parse_recs(bc_rec, p_rec))
+        first_scores_and_reads = []
+        for i, (bc_rec, p_read) in enumerate(
+                RNA_paired_recs_iterator(arguments.bc_fastq_file, arguments.paired_fastq_file)
+                ):
+            first_scores_and_reads.append(process_bc_rec_and_p_read(bc_rec, p_read))
             if i >= n_first_seqs:
                 break
 
-        scores = [score for score, rec in first_scores_and_recs]
+        scores = [score for score, read in first_scores_and_reads]
         thresh = np.average(scores) - 2 * np.std(scores)
         log.info(f'Score threshold: {thresh:.2f}')
-        out_recs = [rec for score, rec in first_scores_and_recs if score >= thresh and rec]
-        total_out = len(out_recs)
-        SeqIO.write(out_recs, out, 'fastq')
+        out_reads = [read for score, read in first_scores_and_reads if score >= thresh and read]
+        total_out = len(out_reads)
+        for read in out_reads:
+            out.write(read)
 
         log.info('Continuing...')
-        for i, (bc_rec, p_rec) in enumerate(zip(
-            SeqIO.parse(gzip_friendly_open(arguments.bc_fastq_file), 'fastq'),
-            SeqIO.parse(gzip_friendly_open(arguments.paired_fastq_file), 'fastq')
-            )):
+        for i, (bc_rec, p_read) in enumerate(
+                RNA_paired_recs_iterator(arguments.bc_fastq_file, arguments.paired_fastq_file)
+                ):
             if i <= n_first_seqs:
                 continue
             if i % 10000 == 0 and i > 0:
                 log.info(f'  {i:,d}')
-            score, rec = parse_recs(bc_rec, p_rec)
-            if score >= thresh and rec:
+            score, read = process_bc_rec_and_p_read(bc_rec, p_read)
+            if score >= thresh and read:
                 total_out += 1
-                SeqIO.write(rec, out, 'fastq')
+                out.write(read)
+
+
+#        with Pool(processes=arguments.threads) as pool:
+#            for i, (score, out_read) in enumerate(pool.imap(
+#                    process_bc_rec_and_p_read,
+#                    RNA_paired_recs_iterator(arguments.bc_fastq_file, arguments.paired_fastq_file),
+#                    chunksize=1000)):
+#                if i % 10000 == 0 and i > 0:
+#                    log.info(f'  {i:,d}')
+#                if score >= thresh and read:
+#                    total_out += 1
+#                    out.write(read)
+
+
         log.info(f'{i+1:,d} records processed')
         log.info(f'{total_out:,d} records output')
 
