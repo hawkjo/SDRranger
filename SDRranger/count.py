@@ -1,7 +1,7 @@
 import logging
-import warnings
 import os
 import pysam
+import tempfile
 import numpy as np
 from Bio import SeqIO
 from collections import Counter, defaultdict
@@ -11,7 +11,7 @@ from .bc_decoders import BCDecoder, SBCDecoder
 from .misc import gzip_friendly_open
 
 log = logging.getLogger(__name__)
-warnings.filterwarnings('ignore', '.*SQ')
+pysam.set_verbosity(0)
 
 
 commonseq1_options = ['GTCAGTACGTACGAGTC'[i:] for i in range(4)]
@@ -89,20 +89,6 @@ def RNA_paired_recs_iterator(bc_fastq_fpath, p_bam_fpath):
         yield bc_rec, p_read
 
 
-def chunked_RNA_paired_recs_iterator(arguments, bc_fastq_fpath, p_bam_fpath, chunksize=10000):
-    """
-    Breaks into pairs into chunks for parallelism
-    """
-    chunk = []
-    for i, (bc_rec, p_read) in enumerate(RNA_paired_recs_iterator(bc_fastq_fpath, p_bam_fpath)):
-        chunk.append((bc_rec, p_read.to_string()))
-        if i % chunksize == 0 and i > 0:
-            yield arguments, chunk
-            chunk = []
-    if i % chunksize:
-        yield arguments, chunk
-
-
 def serial_process_RNA_fastqs(arguments, out_fpath):
     log.info('Building aligners and barcode decoders')
     aligners = [CustomBCAligner('N'*9, cso, 'N'*9, commonseq2_RNA, 'N'*8, 'N'*8) for cso in commonseq1_options]
@@ -144,57 +130,102 @@ def serial_process_RNA_fastqs(arguments, out_fpath):
     log.info(f'{total_out:,d} records output')
 
 
-def process_chunk_of_reads(args_and_chunk):
+def write_chunk(arguments, tmpdirname, i, bc_chunk, p_chunk):
+    """
+    Writes chunks to files
+    """
+    tmp_fq_fpath = os.path.join(tmpdirname, f'{i}.fq')
+    tmp_bam_fpath = os.path.join(tmpdirname, f'{i}.bam')
+    tmp_out_bam_fpath = os.path.join(tmpdirname, f'{i}.parsed.bam')
+    with open(tmp_fq_fpath, 'w') as fq_out:
+        SeqIO.write(bc_chunk, fq_out, 'fastq')
+    with pysam.AlignmentFile(tmp_bam_fpath, 'wb', template=pysam.AlignmentFile(arguments.paired_fastq_file)) as bam_out:
+        for p_read in p_chunk:
+            bam_out.write(p_read)
+    return tmp_fq_fpath, tmp_bam_fpath, tmp_out_bam_fpath
+
+
+def chunked_RNA_paired_recs_tmp_files_iterator(arguments, thresh, bc_fastq_fpath, p_bam_fpath, tmpdirname, chunksize):
+    """
+    Breaks pairs into chunks and writes to files.
+    """
+    bc_chunk, p_chunk = [], []
+    for i, (bc_rec, p_read) in enumerate(RNA_paired_recs_iterator(bc_fastq_fpath, p_bam_fpath)):
+        bc_chunk.append(bc_rec)
+        p_chunk.append(p_read)
+        if i % chunksize == 0 and i > 0:
+            yield arguments, thresh, write_chunk(arguments, tmpdirname, i, bc_chunk, p_chunk)
+            bc_chunk, p_chunk = [], []
+    if i % chunksize:
+        yield arguments, thresh, write_chunk(arguments, tmpdirname, i, bc_chunk, p_chunk)
+
+
+def process_chunk_of_reads(args_and_fpaths):
     """
     Processing chunks of reads. Required to build aligners in each parallel process.
     """
-    arguments, chunk = args_and_chunk
+    arguments, thresh, (tmp_fq_fpath, tmp_bam_fpath, tmp_out_bam_fpath) = args_and_fpaths
     aligners = [CustomBCAligner('N'*9, cso, 'N'*9, commonseq2_RNA, 'N'*8, 'N'*8) for cso in commonseq1_options]
     bcd = BCDecoder(arguments.barcode_whitelist, arguments.max_bc_err_decode)
     sbcd = SBCDecoder(arguments.sample_barcode_whitelist, arguments.max_sbc_err_decode, arguments.sbc_reject_delta)
-    header = pysam.AlignmentHeader()
-    chunk = [(bc_rec, pysam.AlignedSegment.fromstring(p_read, header=header)) for bc_rec, p_read in chunk]
-    return [process_bc_rec_and_p_read(bc_rec, p_read, aligners, bcd, sbcd) for bc_rec, p_read in chunk]
+    with pysam.AlignmentFile(tmp_out_bam_fpath, 'wb', template=pysam.AlignmentFile(arguments.paired_fastq_file)) as out:
+        for bc_rec, p_read in RNA_paired_recs_iterator(tmp_fq_fpath, tmp_bam_fpath):
+            score, read = process_bc_rec_and_p_read(bc_rec, p_read, aligners, bcd, sbcd)
+            if score >= thresh and read:
+                out.write(read)
+    os.remove(tmp_fq_fpath)
+    os.remove(tmp_bam_fpath)
+    return tmp_out_bam_fpath
 
 
 def parallel_process_RNA_fastqs(arguments, out_fpath):
-    n_first_seqs = 4000
+    """
+    Parallel version of serial process.
+    
+    Rather more involved. pysam doesn't parallelize well. AlignedSegment's don't pickle. So one
+    must create a large number of temporary files and process things that way, with multiple levels
+    of helper functions
+    """
+    n_first_seqs = 1000
     chunksize=1000
-    with pysam.AlignmentFile(out_fpath, 'wb', template=pysam.AlignmentFile(arguments.paired_fastq_file)) as out:
-        with Pool(arguments.threads) as pool:
-            log.info(f'Processing first {n_first_seqs:,d} for score threshold...')
-            first_scores_and_reads = []
-            for i, score_and_read_chunk in enumerate(pool.imap(
-                    process_chunk_of_reads,
-                    chunked_RNA_paired_recs_iterator(
-                        arguments,
-                        arguments.bc_fastq_file,
-                        arguments.paired_fastq_file,
-                        chunksize=chunksize),
-                    )):
-                first_scores_and_reads.extend(score_and_read_chunk)
-                if (i+1)*chunksize >= n_first_seqs:
-                    break
-            scores = [score for score, read in first_scores_and_reads]
-            thresh = np.average(scores) - 2 * np.std(scores)
-            log.info(f'Score threshold: {thresh:.2f}')
+    aligners = [CustomBCAligner('N'*9, cso, 'N'*9, commonseq2_RNA, 'N'*8, 'N'*8) for cso in commonseq1_options]
+    bcd = BCDecoder(arguments.barcode_whitelist, arguments.max_bc_err_decode)
+    sbcd = SBCDecoder(arguments.sample_barcode_whitelist, arguments.max_sbc_err_decode, arguments.sbc_reject_delta)
+    with pysam.AlignmentFile(out_fpath, 'wb', template=pysam.AlignmentFile(arguments.paired_fastq_file)) as out, \
+            Pool(arguments.threads) as pool, \
+            tempfile.TemporaryDirectory(prefix='/dev/shm/') as tmpdirname:
+        log.info(f'Processing first {n_first_seqs:,d} for score threshold...')
+        first_scores_and_reads = []
+        for i, (bc_rec, p_read) in enumerate(
+                RNA_paired_recs_iterator(arguments.bc_fastq_file, arguments.paired_fastq_file)
+                ):
+            first_scores_and_reads.append(process_bc_rec_and_p_read(bc_rec, p_read, aligners, bcd, sbcd))
+            if i >= n_first_seqs:
+                break
 
-            total_out = 0
-            for i, score_and_read_chunk in enumerate(pool.imap(
-                    process_chunk_of_reads,
-                    chunked_RNA_paired_recs_iterator(
-                        arguments,
-                        arguments.bc_fastq_file,
-                        arguments.paired_fastq_file,
-                        chunksize=chunksize)
-                    )):
-                log.info(f'  {(i+1)*chunksize:,d}')
-                for score, read in score_and_read_chunk:
-                    if score >= thresh and read:
-                        total_out += 1
-                        out.write(read)
+        scores = [score for score, read in first_scores_and_reads]
+        thresh = np.average(scores) - 2 * np.std(scores)
+        log.info(f'Score threshold: {thresh:.2f}')
 
-    log.info(f'{i*chunksize+len(score_and_read_chunk):,d} records processed')
+        log.info(f'Using temporary directory {tmpdirname}')
+        total_out = 0
+        for i, tmp_out_bam_fpath in enumerate(pool.imap(
+                process_chunk_of_reads,
+                chunked_RNA_paired_recs_tmp_files_iterator(
+                    arguments,
+                    thresh,
+                    arguments.bc_fastq_file,
+                    arguments.paired_fastq_file,
+                    tmpdirname,
+                    chunksize=chunksize)
+                )):
+            log.info(f'  {(i+1)*chunksize:,d}')
+            for read in pysam.AlignmentFile(tmp_out_bam_fpath).fetch(until_eof=True):
+                total_out += 1
+                out.write(read)
+            os.remove(tmp_out_bam_fpath)
+
+    log.info(f'{i*chunksize:,d}-{(i+1)*chunksize:,d} records processed')
     log.info(f'{total_out:,d} records output')
 
 
