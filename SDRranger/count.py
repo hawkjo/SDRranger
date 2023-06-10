@@ -8,7 +8,7 @@ from collections import Counter, defaultdict
 from multiprocessing import Pool
 from .bc_aligner import CustomBCAligner
 from .bc_decoders import BCDecoder, SBCDecoder
-from .misc import gzip_friendly_open
+from .misc import gzip_friendly_open, names_pair
 
 log = logging.getLogger(__name__)
 pysam.set_verbosity(0)
@@ -81,11 +81,9 @@ def RNA_paired_recs_iterator(bc_fastq_fpath, p_bam_fpath):
     """
     Iterates bc fastq reads with matching paired bam records.
     """
-    def reads_match(r1, r2):
-        return all(c1 == c2 or set([c1, c2]) == set('12') for c1, c2 in zip(r1, r2))
     bc_fq_iter = iter(SeqIO.parse(gzip_friendly_open(bc_fastq_fpath), 'fastq'))
     for p_read in pysam.AlignmentFile(p_bam_fpath).fetch(until_eof=True):
-        bc_rec = next(rec for rec in bc_fq_iter if reads_match(str(rec.id), str(p_read.qname)))
+        bc_rec = next(rec for rec in bc_fq_iter if names_pair(str(rec.id), str(p_read.qname)))
         yield bc_rec, p_read
 
 

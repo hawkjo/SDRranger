@@ -23,3 +23,7 @@ def write_stats_file_from_cntr(cntr, fpath):
             s = f'{k}: {v:,d}'
             log.info(s)
             out.write(s + '\n')
+
+
+def names_pair(s1, s2):
+    return all(c1 == c2 or set([c1, c2]) == set('12') for c1, c2 in zip(s1, s2))
