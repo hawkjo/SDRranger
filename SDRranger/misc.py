@@ -29,12 +29,8 @@ def write_stats_file_from_cntr(cntr, fpath):
 
 def find_paired_fastqs_in_dir(fq_dir):
     raw_prompts = ['*.fastq', '*.fq', '*.txt']
-    glob_prompts = [prompt for rs in raw_prompts for prompt in [rs, f'{rs}.gz']]
-    fq_fpaths = [
-        fpath
-        for glob_prompt in [os.path.join(fq_dir, s) for s in glob_prompts]
-        for fpath in glob.glob(glob_prompt)
-    ]
+    glob_prompts = [os.path.join(fq_dir, prompt) for rp in raw_prompts for prompt in [rp, f'{rp}.gz']]
+    fq_fpaths = [fpath for glob_prompt in glob_prompts for fpath in glob.glob(glob_prompt)]
     fq_fpaths.sort()
 
     paired_names = []
