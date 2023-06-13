@@ -187,7 +187,7 @@ def serial_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_bc_
     log.info(f'{total_out:,d} records output')
 
 
-def write_chunk(arguments, tmpdirname, i, bc_chunk, p_chunk):
+def write_chunk(arguments, tmpdirname, template_bam_fpath, i, bc_chunk, p_chunk):
     """
     Writes chunks to files
     """
@@ -196,10 +196,10 @@ def write_chunk(arguments, tmpdirname, i, bc_chunk, p_chunk):
     tmp_out_bam_fpath = os.path.join(tmpdirname, f'{i}.parsed.bam')
     with open(tmp_fq_fpath, 'w') as fq_out:
         SeqIO.write(bc_chunk, fq_out, 'fastq')
-    with pysam.AlignmentFile(tmp_bam_fpath, 'wb', template=pysam.AlignmentFile(arguments.paired_fastq_file)) as bam_out:
+    with pysam.AlignmentFile(tmp_bam_fpath, 'wb', template=pysam.AlignmentFile(template_bam_fpath)) as bam_out:
         for p_read in p_chunk:
             bam_out.write(p_read)
-    return tmp_fq_fpath, tmp_bam_fpath, tmp_out_bam_fpath
+    return tmp_fq_fpath, tmp_bam_fpath, tmp_out_bam_fpath, template_bam_fpath
 
 
 def chunked_RNA_paired_recs_tmp_files_iterator(arguments, thresh, bc_fq_fpath, p_bam_fpath, tmpdirname, chunksize):
@@ -211,21 +211,21 @@ def chunked_RNA_paired_recs_tmp_files_iterator(arguments, thresh, bc_fq_fpath, p
         bc_chunk.append(bc_rec)
         p_chunk.append(p_read)
         if i % chunksize == 0 and i > 0:
-            yield arguments, thresh, write_chunk(arguments, tmpdirname, i, bc_chunk, p_chunk)
+            yield arguments, thresh, write_chunk(arguments, tmpdirname, p_bam_fpath, i, bc_chunk, p_chunk)
             bc_chunk, p_chunk = [], []
     if i % chunksize:
-        yield arguments, thresh, write_chunk(arguments, tmpdirname, i, bc_chunk, p_chunk)
+        yield arguments, thresh, write_chunk(arguments, tmpdirname, p_bam_fpath, i, bc_chunk, p_chunk)
 
 
 def process_chunk_of_reads(args_and_fpaths):
     """
     Processing chunks of reads. Required to build aligners in each parallel process.
     """
-    arguments, thresh, (tmp_fq_fpath, tmp_bam_fpath, tmp_out_bam_fpath) = args_and_fpaths
+    arguments, thresh, (tmp_fq_fpath, tmp_bam_fpath, tmp_out_bam_fpath, template_bam_fpath) = args_and_fpaths
     aligners = build_RNA_bc_aligners()
     bcd = BCDecoder(arguments.barcode_whitelist, arguments.max_bc_err_decode)
     sbcd = SBCDecoder(arguments.sample_barcode_whitelist, arguments.max_sbc_err_decode, arguments.sbc_reject_delta)
-    with pysam.AlignmentFile(tmp_out_bam_fpath, 'wb', template=pysam.AlignmentFile(arguments.paired_fastq_file)) as out:
+    with pysam.AlignmentFile(tmp_out_bam_fpath, 'wb', template=pysam.AlignmentFile(template_bam_fpath)) as out:
         for bc_rec, p_read in RNA_paired_recs_iterator(tmp_fq_fpath, tmp_bam_fpath):
             score, read = process_bc_rec_and_p_read(bc_rec, p_read, aligners, bcd, sbcd)
             if score >= thresh and read:
@@ -244,12 +244,11 @@ def parallel_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_b
     of helper functions
     """
     n_first_seqs = 1000
-    chunksize=1000
+    chunksize=2000
     aligners = build_RNA_bc_aligners()
     bcd = BCDecoder(arguments.barcode_whitelist, arguments.max_bc_err_decode)
     sbcd = SBCDecoder(arguments.sample_barcode_whitelist, arguments.max_sbc_err_decode, arguments.sbc_reject_delta)
-    with pysam.AlignmentFile(out_fpath, 'wb', template=pysam.AlignmentFile(star_raw_fpath)) as out, \
-            Pool(arguments.threads) as pool, \
+    with Pool(arguments.threads) as pool, \
             tempfile.TemporaryDirectory(prefix='/dev/shm/') as tmpdirname:
         log.info(f'Processing first {n_first_seqs:,d} for score threshold...')
         first_scores_and_reads = []
@@ -279,7 +278,7 @@ def parallel_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_b
             log.info(f'  {(i+1)*chunksize:,d}')
             for read in pysam.AlignmentFile(tmp_out_bam_fpath).fetch(until_eof=True):
                 total_out += 1
-                out.write(read)
+                star_w_bc_fh.write(read)
             os.remove(tmp_out_bam_fpath)
 
     log.info(f'{i*chunksize:,d}-{(i+1)*chunksize:,d} records processed')
