@@ -2,8 +2,8 @@
 SDRranger: Processing Genomic-Transcriptomic TAP-Seq data.
 
 Usage:
-  SDRranger count_RNA        <fastq_dir> [--barcode-whitelist=<barcode_whitelist>] [--max-bc-err-decode=<max_bc_err_decode>] [--sample-barcode-whitelist=<sample_barcode_whitelist>] [--max-sbc-err-decode=<max_sbc_err_decode>] [--sbc-reject-delta=<sbc_reject_delta>] [--output-dir=<output_dir>] [--threads=<threads>] [-v | -vv | -vvv]
-  SDRranger count_gDNA       <fastq_dir> [--barcode-whitelist=<barcode_whitelist>] [--max-bc-err-decode=<max_bc_err_decode>] [--output-dir=<output_dir>] [--threads=<threads>] [-v | -vv | -vvv]
+  SDRranger count_RNA        <fastq_dir> [--STAR-ref-dir=<>] [--barcode-whitelist=<>] [--max-bc-err-decode=<>] [--sample-barcode-whitelist=<>] [--max-sbc-err-decode=<>] [--sbc-reject-delta=<>] [--output-dir=<>] [--threads=<>] [-v | -vv | -vvv]
+  SDRranger count_gDNA       <fastq_dir> [--STAR-ref-dir=<>] [--barcode-whitelist=<>] [--max-bc-err-decode=<>] [--output-dir=<>] [--threads=<>] [-v | -vv | -vvv]
 
 Options:
   -h --help     Show this screen.

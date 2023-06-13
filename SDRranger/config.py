@@ -24,7 +24,7 @@ class CommandLineArguments(object):
 
     @property
     def fastq_dir(self):
-        return self._arguments('<fastq_dir>')
+        return self._arguments['<fastq_dir>']
 
     @property
     def log_level(self):
@@ -34,6 +34,10 @@ class CommandLineArguments(object):
                      3: logging.DEBUG}
         # default to silent if the user supplies no verbosity setting
         return log_level.get(self._arguments['-v'], logging.ERROR)
+
+    @property
+    def star_ref_dir(self):
+        return self._arguments['--STAR-ref-dir'] 
 
     @property
     def max_bc_err_decode(self):
