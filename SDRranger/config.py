@@ -23,12 +23,8 @@ class CommandLineArguments(object):
                 return possible_command
 
     @property
-    def bc_fastq_file(self):
-        return os.path.expanduser(self._arguments['<bc_fastq_file>'])
-
-    @property
-    def paired_fastq_file(self):
-        return os.path.expanduser(self._arguments['<paired_fastq_file>'])
+    def fastq_dir(self):
+        return self._arguments('<fastq_dir>')
 
     @property
     def log_level(self):
