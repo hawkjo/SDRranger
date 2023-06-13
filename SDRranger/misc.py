@@ -1,4 +1,6 @@
+import os
 import gzip
+import glob
 import logging
 
 
@@ -25,5 +27,30 @@ def write_stats_file_from_cntr(cntr, fpath):
             out.write(s + '\n')
 
 
+def find_paired_fastqs_in_dir(fq_dir):
+    raw_prompts = ['*.fastq', '*.fq', '*.txt']
+    glob_prompts = [prompt for rs in raw_prompts for prompt in [rs, f'{rs}.gz']]
+    fq_fpaths = [
+        fpath
+        for glob_prompt in [os.path.join(fq_dir, s) for s in glob_prompts]
+        for fpath in glob.glob(glob_prompt)
+    ]
+    fq_fpaths.sort()
+
+    paired_names = []
+    while fq_fpaths:
+        fpath1 = fq_fpaths.pop(0)
+        fpath2 = fq_fpaths.pop(0)
+        if not names_pair(fpath1, fpath2):
+            raise ValueError(f'Unexpected input in fastq directory. Following files do not pair:\n{fpath1}\n{fpath2}')
+        paired_names.append((fpath1, fpath2))
+    return paired_names
+
+
 def names_pair(s1, s2):
+    """
+    A very general test for whether two names are pair-compatible.
+    
+    Intentionally permissive. Flags true any pair of strings identical except for changing 1 and 2.
+    """
     return all(c1 == c2 or set([c1, c2]) == set('12') for c1, c2 in zip(s1, s2))
