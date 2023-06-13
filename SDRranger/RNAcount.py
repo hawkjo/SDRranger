@@ -10,14 +10,12 @@ from multiprocessing import Pool
 from .bc_aligner import CustomBCAligner
 from .bc_decoders import BCDecoder, SBCDecoder
 from .misc import gzip_friendly_open, names_pair, find_paired_fastqs_in_dir, file_prefix_from_fpath
+from .constants import commonseq1_options, commonseq2_RNA 
+
 
 log = logging.getLogger(__name__)
 pysam.set_verbosity(0)
 
-
-commonseq1_options = ['GTCAGTACGTACGAGTC'[i:] for i in range(4)]
-commonseq2_RNA = 'GTACTCGCAGTAGTCGACACGTC'
-commonseq2_gDNA = 'GTACTCGCAGTAGTC'
 
 def process_RNA_fastqs(arguments):
     """
