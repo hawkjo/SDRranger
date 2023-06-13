@@ -3,12 +3,13 @@ import os
 import pysam
 import tempfile
 import numpy as np
+import subprocess
 from Bio import SeqIO
 from collections import Counter, defaultdict
 from multiprocessing import Pool
 from .bc_aligner import CustomBCAligner
 from .bc_decoders import BCDecoder, SBCDecoder
-from .misc import gzip_friendly_open, names_pair
+from .misc import gzip_friendly_open, names_pair, find_paired_fastqs_in_dir, file_prefix_from_fpath
 
 log = logging.getLogger(__name__)
 pysam.set_verbosity(0)
@@ -22,11 +23,13 @@ def process_RNA_fastqs(arguments):
     """
     Output single file with parsed bcs from bc_fastq in read names and seqs from paired_fastq.
     """
-    paired_fpath = arguments.paired_fastq_file
-    paired_bname = os.path.splitext(paired_fpath[:-3] if paired_fpath.endswith('.gz') else paired_fpath)[0]
-    out_fname = f'{os.path.basename(paired_bname)}_parsed.bam'
     if not os.path.exists(arguments.output_dir):
         os.makedirs(arguments.output_dir)
+    paired_fpaths = find_paired_fastqs_in_dir(arguments.fastq_dir)
+    #TODO deal with multiple paired names
+    #TODO add star alignment
+
+    out_fname = f'{file_prefix_from_fpath(arguments.paired_fastq_file)}_parsed.bam'
     out_fpath = os.path.join(arguments.output_dir, out_fname)
 
     log.info('Processing fastqs:')
@@ -39,6 +42,24 @@ def process_RNA_fastqs(arguments):
         serial_process_RNA_fastqs(arguments, out_fpath)
     else:
         parallel_process_RNA_fastqs(arguments, out_fpath)
+
+
+def run_STAR(arguments, fastq_fpath):
+    star_out_dir = os.path.join(arguments.out_dir, 'STAR_files')
+    fastq_bname = file_prefix_from_fpath(fastq_fpath)
+    out_prefix = os.path.join(arguments.out_dir, f'{fastq_bname}_')
+    cmd_star = [
+        'STAR',
+        '--runThreadN', arguments.threads,
+        '--genomeDir', arguments.star_ref_dir,
+        '--readFilesIn', fastq_fpath,
+        '--outFileNamePrefix', out_prefix,
+        '--outFilterMultimapNmax 1', 
+        '--outSAMtype BAM Unsorted', 
+    ]
+    if fastq_fpath.endswith('gz'):
+        cmd_star.append('--readFilesCommand zcat')
+    subprocess.run(cmd_star, check=True)
 
 
 def process_bc_rec_and_p_read(bc_rec, p_read, aligners, bcd, sbcd):

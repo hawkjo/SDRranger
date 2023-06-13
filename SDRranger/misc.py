@@ -51,6 +51,12 @@ def names_pair(s1, s2):
     """
     A very general test for whether two names are pair-compatible.
     
-    Intentionally permissive. Flags true any pair of strings identical except for changing 1 and 2.
+    Intentionally permissive. Flags true any pair of strings identical except for possibly 1/2.
     """
     return all(c1 == c2 or set([c1, c2]) == set('12') for c1, c2 in zip(s1, s2))
+
+
+def file_prefix_from_fpath(fpath):
+    """Strip away directories and extentions from file path"""
+    bname = os.path.splitext(fpath[:-3] if fpath.endswith('.gz') else fpath)[0]
+    return os.path.basename(bname)
