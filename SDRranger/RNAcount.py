@@ -1,12 +1,12 @@
 import logging
 import os
 import pysam
+import itertools
 import tempfile
 import numpy as np
 import subprocess
 import shutil
 from Bio import SeqIO
-from collections import Counter, defaultdict
 from multiprocessing import Pool
 from .bc_aligner import CustomBCAligner
 from .bc_decoders import BCDecoder, SBCDecoder
@@ -36,7 +36,7 @@ def process_RNA_fastqs(arguments):
         star_out_dir, star_out_fpath = run_STAR_RNA(arguments, paired_fq_fpath)
         paired_fq_bam_fpaths.append((bc_fq_fpath, star_out_fpath))
 
-    star_w_bc_fname = f'all_STAR_with_bc.bam'
+    star_w_bc_fname = 'RNA_with_bc.bam'
     star_w_bc_fpath = os.path.join(arguments.output_dir, star_w_bc_fname)
     log.info('Writing output to:')
     log.info(f'  {star_w_bc_fpath}')
@@ -51,10 +51,20 @@ def process_RNA_fastqs(arguments):
             process_fastqs_func(arguments, bc_fq_fpath, star_raw_fpath, star_w_bc_fh)
     shutil.rmtree(star_out_dir)  # clean up intermediate STAR files
 
-    star_w_bc_sorted_fname = f'all_STAR_with_bc.sorted.bam'
+    star_w_bc_sorted_fname = 'RNA_with_bc.sorted.bam'
     star_w_bc_sorted_fpath = os.path.join(arguments.output_dir, star_w_bc_sorted_fname)
+    log.info('Sorting bam...')
     pysam.sort('-o', star_w_bc_sorted_fpath, star_w_bc_fpath)
     os.remove(star_w_bc_fpath)  #clean up unsorted bam
+    log.info('Indexing bam...')
+    pysam.index(star_w_bc_sorted_fpath)
+
+    log.info('Correcting UMIs...')
+    star_w_bc_umi_sorted_fname = 'RNA_with_bc_umi.sorted.bam'
+    star_w_bc_umi_sorted_fpath = os.path.join(arguments.output_dir, star_w_bc_umi_sorted_fname)
+    # TODO
+    correct_UMIs(star_w_bc_sorted_fpath, star_w_bc_umi_sorted_fpath)
+    log.info('Done')
 
 
 def run_STAR_RNA(arguments, fastq_fpath):
@@ -68,7 +78,7 @@ def run_STAR_RNA(arguments, fastq_fpath):
     out_prefix = os.path.join(star_out_dir, f'{fastq_bname}_')
     cmd_star = [
         'STAR',
-        f'--runThreadN {arguments.threads}',
+        f'--runThreadN 1', # required to keep order matching with fastq file
         f'--genomeDir {arguments.star_ref_dir}',
         f'--readFilesIn {fastq_fpath}',
         f'--outFileNamePrefix {out_prefix}',
@@ -105,16 +115,16 @@ def process_bc_rec_and_p_read(bc_rec, p_read, aligners, bcd, sbcd):
 
     # Add tags for corrected and raw:
     # Cell barcode
-    p_read.setTag('CB', f'{bc1}.{bc2}')
-    p_read.setTag('CR', f'{raw_pieces[0]}.{raw_pieces[2]}')
+    p_read.set_tag('CB', f'{bc1}.{bc2}')
+    p_read.set_tag('CR', f'{raw_pieces[0]}.{raw_pieces[2]}')
     # Sample barcode
-    p_read.setTag('SB', sbc)
-    p_read.setTag('SR', raw_pieces[4])
+    p_read.set_tag('SB', sbc)
+    p_read.set_tag('SR', raw_pieces[4])
     # Filler sequences
-    p_read.setTag('FB', f'{commonseq1}.{commonseq2}')
-    p_read.setTag('FR', f'{raw_pieces[1]}.{raw_pieces[3]}')
+    p_read.set_tag('FB', f'{commonseq1}.{commonseq2}')
+    p_read.set_tag('FR', f'{raw_pieces[1]}.{raw_pieces[3]}')
     # And raw UMI
-    p_read.setTag('UR', new_pieces[-1])
+    p_read.set_tag('UR', new_pieces[-1])
     return raw_score, p_read
 
 
@@ -270,22 +280,34 @@ def parallel_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_b
 
         log.info(f'Using temporary directory {tmpdirname}')
         total_out = 0
-        for i, tmp_out_bam_fpath in enumerate(pool.imap(
+        chunk_iter = chunked_RNA_paired_recs_tmp_files_iterator(
+                arguments,
+                thresh,
+                bc_fq_fpath,
+                star_raw_fpath,
+                tmpdirname,
+                chunksize=chunksize)
+        i = 0
+        while True:
+            chunk_of_args_and_fpaths = list(itertools.islice(chunk_iter, arguments.threads))
+            if not chunk_of_args_and_fpaths:
+                break
+            for j, tmp_out_bam_fpath in enumerate(pool.imap(
                 process_chunk_of_reads,
-                chunked_RNA_paired_recs_tmp_files_iterator(
-                    arguments,
-                    thresh,
-                    bc_fq_fpath,
-                    star_raw_fpath,
-                    tmpdirname,
-                    chunksize=chunksize)
-                )):
-            log.info(f'  {(i+1)*chunksize:,d}')
-            for read in pysam.AlignmentFile(tmp_out_bam_fpath).fetch(until_eof=True):
-                total_out += 1
-                star_w_bc_fh.write(read)
-            os.remove(tmp_out_bam_fpath)
-
-    log.info(f'{i*chunksize:,d}-{(i+1)*chunksize:,d} records processed')
+                chunk_of_args_and_fpaths)):
+                it_idx = i*arguments.threads+j
+                log.info(f'  {it_idx*chunksize:,d}-{(it_idx+1)*chunksize:,d}')
+                for read in pysam.AlignmentFile(tmp_out_bam_fpath).fetch(until_eof=True):
+                    total_out += 1
+                    star_w_bc_fh.write(read)
+                os.remove(tmp_out_bam_fpath)
+            i += 1
+    
+    nrecs = int(file_prefix_from_fpath(tmp_out_bam_fpath).split('.')[0])
+    log.info(f'{nrecs:,d} records processed')
     log.info(f'{total_out:,d} records output')
+
+def correct_UMIs(input_bam_fpath, out_bam_fpath):
+    # TODO
+    return
 
