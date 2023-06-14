@@ -12,6 +12,7 @@ from .bc_aligner import CustomBCAligner
 from .bc_decoders import BCDecoder, SBCDecoder
 from .misc import gzip_friendly_open, names_pair, find_paired_fastqs_in_dir, file_prefix_from_fpath
 from .constants import commonseq1_options, commonseq2_RNA 
+from .umi import get_umi_maps_from_bam_file
 
 
 log = logging.getLogger(__name__)
@@ -25,6 +26,10 @@ def process_RNA_fastqs(arguments):
     if not os.path.exists(arguments.output_dir):
         os.makedirs(arguments.output_dir)
     paired_fpaths = find_paired_fastqs_in_dir(arguments.fastq_dir)
+    log.info('Files to process:')
+    for fpath1, fpath2 in paired_fpaths:
+        log.info(f'  {fpath1}')
+        log.info(f'  - {fpath2}')
     bc_fq_idx, paired_fq_idx = determine_bc_and_paired_fastq_idxs(paired_fpaths) # determine which paired end has bcs
     log.info(f'Detected barcodes in read{bc_fq_idx+1} files')
     log.info(f'Running STAR alignment...')
@@ -62,8 +67,11 @@ def process_RNA_fastqs(arguments):
     log.info('Correcting UMIs...')
     star_w_bc_umi_sorted_fname = 'RNA_with_bc_umi.sorted.bam'
     star_w_bc_umi_sorted_fpath = os.path.join(arguments.output_dir, star_w_bc_umi_sorted_fname)
-    # TODO
     correct_UMIs(star_w_bc_sorted_fpath, star_w_bc_umi_sorted_fpath)
+    log.info('Indexing bam...')
+    pysam.index(star_w_bc_umi_sorted_fpath)
+    os.remove(star_w_bc_sorted_fpath)
+    os.remove(star_w_bc_sorted_fpath + '.bai')
     log.info('Done')
 
 
@@ -308,6 +316,14 @@ def parallel_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_b
     log.info(f'{total_out:,d} records output')
 
 def correct_UMIs(input_bam_fpath, out_bam_fpath):
-    # TODO
-    return
+    with pysam.AlignmentFile(input_bam_fpath) as bamfile:
+        reference_names = bamfile.references
 
+    with pysam.AlignmentFile(out_bam_fpath, 'wb', template=pysam.AlignmentFile(input_bam_fpath)) as bam_out:
+        for ref in reference_names:
+            log.info(f'  {ref}')
+            umi_map_given_bc = get_umi_maps_from_bam_file(input_bam_fpath, chrm=ref)
+            for read in pysam.AlignmentFile(input_bam_fpath).fetch(ref):
+                corrected_umi = umi_map_given_bc[read.get_tag('CB')][read.get_tag('UR')]
+                read.set_tag('UB', corrected_umi)
+                bam_out.write(read)
