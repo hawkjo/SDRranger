@@ -4,6 +4,7 @@ import pysam
 import tempfile
 import numpy as np
 import subprocess
+import shutil
 from Bio import SeqIO
 from collections import Counter, defaultdict
 from multiprocessing import Pool
@@ -48,11 +49,12 @@ def process_RNA_fastqs(arguments):
             log.info(f'  barcode fastq: {bc_fq_fpath}')
             log.info(f'  paired bam:    {star_raw_fpath}')
             process_fastqs_func(arguments, bc_fq_fpath, star_raw_fpath, star_w_bc_fh)
+    shutil.rmtree(star_out_dir)  # clean up intermediate STAR files
 
     star_w_bc_sorted_fname = f'all_STAR_with_bc.sorted.bam'
     star_w_bc_sorted_fpath = os.path.join(arguments.output_dir, star_w_bc_sorted_fname)
     pysam.sort('-o', star_w_bc_sorted_fpath, star_w_bc_fpath)
-    os.remove(star_w_bc_fpath)
+    os.remove(star_w_bc_fpath)  #clean up unsorted bam
 
 
 def run_STAR_RNA(arguments, fastq_fpath):
