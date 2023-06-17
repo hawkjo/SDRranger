@@ -19,6 +19,9 @@ log = logging.getLogger(__name__)
 pysam.set_verbosity(0)
 
 
+n_first_seqs = 10000  # n seqs for finding score threshold
+
+
 def process_RNA_fastqs(arguments):
     """
     Output single file with parsed bcs from bc_fastq in read names and seqs from paired_fastq.
@@ -27,9 +30,11 @@ def process_RNA_fastqs(arguments):
         os.makedirs(arguments.output_dir)
     paired_fpaths = find_paired_fastqs_in_dir(arguments.fastq_dir)
     log.info('Files to process:')
-    for fpath1, fpath2 in paired_fpaths:
+    for i, (fpath1, fpath2) in enumerate(paired_fpaths):
         log.info(f'  {fpath1}')
-        log.info(f'  - {fpath2}')
+        log.info(f'  {fpath2}')
+        if i < len(paired_fpaths)-1:
+            log.info('  -')
     bc_fq_idx, paired_fq_idx = determine_bc_and_paired_fastq_idxs(paired_fpaths) # determine which paired end has bcs
     log.info(f'Detected barcodes in read{bc_fq_idx+1} files')
     log.info(f'Running STAR alignment...')
@@ -95,8 +100,11 @@ def run_STAR_RNA(arguments, fastq_fpath):
     ]
     if fastq_fpath.endswith('gz'):
         cmd_star.append('--readFilesCommand zcat')
-    subprocess.run(cmd_star, check=True)
     star_out_fpath = f'{out_prefix}Aligned.out.bam'
+    if os.path.exists(star_out_fpath):
+        log.info("STAR results found. Skipping alignment")
+    else:
+        subprocess.run(cmd_star, check=True)
     return star_out_dir, star_out_fpath
 
 
@@ -107,7 +115,7 @@ def process_bc_rec_and_p_read(bc_rec, p_read, aligners, bcd, sbcd):
     bc_seq = str(bc_rec.seq)
     scores_and_pieces = [al.find_norm_score_and_pieces(bc_seq) for al in aligners]
     raw_score, raw_pieces = max(scores_and_pieces)
-    raw_bc1, raw_bc2, raw_sbc = [raw_pieces[i] for i in [0, 2, 4]]
+    raw_bc1, raw_bc2, raw_sbc = [raw_pieces[i].upper().replace('N', 'A') for i in [0, 2, 4]]
 
     bc1 = bcd.decode(raw_bc1)
     bc2 = bcd.decode(raw_bc2)
@@ -157,15 +165,15 @@ def build_RNA_bc_aligners():
     """Helper function, kept as function for parallelism"""
     return [CustomBCAligner('N'*9, cso, 'N'*9, commonseq2_RNA, 'N'*8, 'N'*8) for cso in commonseq1_options]
 
-def average_align_score_of_first_recs(fastq_fpath, n_first_seqs=500):
-    """Return average alignment score of first n_first_seqs records"""
+def average_align_score_of_first_recs(fastq_fpath, n_seqs=500):
+    """Return average alignment score of first n_seqs records"""
     aligners = build_RNA_bc_aligners()
     first_scores = []
     for i, rec in enumerate(SeqIO.parse(gzip_friendly_open(fastq_fpath), 'fastq')):
         scores_and_pieces = [al.find_norm_score_and_pieces(str(rec.seq)) for al in aligners]
         raw_score, raw_pieces = max(scores_and_pieces)
         first_scores.append(raw_score)
-        if i >= n_first_seqs:
+        if i >= n_seqs:
             break
     return np.average(first_scores)
 
@@ -176,7 +184,6 @@ def serial_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_bc_
     bcd = BCDecoder(arguments.barcode_whitelist, arguments.max_bc_err_decode)
     sbcd = SBCDecoder(arguments.sample_barcode_whitelist, arguments.max_sbc_err_decode, arguments.sbc_reject_delta)
 
-    n_first_seqs = 1000
     log.info(f'Processing first {n_first_seqs:,d} for score threshold...')
     first_scores_and_reads = []
     for i, (bc_rec, p_read) in enumerate(
@@ -200,7 +207,7 @@ def serial_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_bc_
             ):
         if i <= n_first_seqs:
             continue
-        if i % 10000 == 0 and i > 0:
+        if i % 100000 == 0 and i > 0:
             log.info(f'  {i:,d}')
         score, read = process_bc_rec_and_p_read(bc_rec, p_read, aligners, bcd, sbcd)
         if score >= thresh and read:
@@ -266,8 +273,7 @@ def parallel_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_b
     must create a large number of temporary files and process things that way, with multiple levels
     of helper functions
     """
-    n_first_seqs = 1000
-    chunksize=2000
+    chunksize=100000
     aligners = build_RNA_bc_aligners()
     bcd = BCDecoder(arguments.barcode_whitelist, arguments.max_bc_err_decode)
     sbcd = SBCDecoder(arguments.sample_barcode_whitelist, arguments.max_sbc_err_decode, arguments.sbc_reject_delta)
