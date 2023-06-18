@@ -70,11 +70,16 @@ def process_RNA_fastqs(arguments):
     pysam.index(star_w_bc_sorted_fpath)
 
     log.info('Correcting UMIs...')
+    star_w_bc_umi_fname = 'RNA_with_bc_umi.bam'
+    star_w_bc_umi_fpath = os.path.join(arguments.output_dir, star_w_bc_umi_fname)
     star_w_bc_umi_sorted_fname = 'RNA_with_bc_umi.sorted.bam'
     star_w_bc_umi_sorted_fpath = os.path.join(arguments.output_dir, star_w_bc_umi_sorted_fname)
-    correct_UMIs(star_w_bc_sorted_fpath, star_w_bc_umi_sorted_fpath)
+    correct_UMIs(arguments, star_w_bc_sorted_fpath, star_w_bc_umi_fpath)
+    log.info('Sorting bam...')
+    pysam.sort('-o', star_w_bc_umi_sorted_fpath, star_w_bc_umi_fpath)
     log.info('Indexing bam...')
     pysam.index(star_w_bc_umi_sorted_fpath)
+    os.remove(star_w_bc_umi_fpath)
     os.remove(star_w_bc_sorted_fpath)
     os.remove(star_w_bc_sorted_fpath + '.bai')
     log.info('Done')
@@ -294,6 +299,28 @@ def parallel_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_b
 
         log.info(f'Using temporary directory {tmpdirname}')
         total_out = 0
+
+        # The following iteration architecture is designed to overcome a few limitaitons.
+        #
+        # First: pysam AlignedSegment objects are not picklable, so they cannot be sent to parallel
+        # processes directly. Hence, each chunk of reads must be written to an intermediate file
+        # and processed as a file. The only objects passed around are arguments and filenames 
+        #
+        # Second: pysam does not easily append to an existing bam file, so we pass a filehandle
+        # opened in the parent function that does not close until the full, combined bam file is
+        # produced.
+        #
+        # Third: We use the imap method of the Pool object from the multiprocessing library.
+        # The original intention was to hand it an iterator that generated the intermediate files
+        # as they were lazily loaded by the imap function. However, it turns out the imap function
+        # actually does construct all the objects of the iterator first, generating all files
+        # instead of just the currently needed ones. So we use a construction suggested on
+        # stackoverflow to created it first as an iterator, use itertools.islice to break off a
+        # chunk of arguments at a time (generating only those intermediate files), and then call
+        # imap separately for each chunk thus created. This works as desired, though obviously
+        # sacrifices a bit in performance as the chunks are hard-separated before parallelism.
+        # However, for this problem all pieces in each chunk take very similar amount of time to
+        # process, so the performance sacrifice is not too significant. 
         chunk_iter = chunked_RNA_paired_recs_tmp_files_iterator(
                 arguments,
                 thresh,
@@ -317,18 +344,26 @@ def parallel_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_b
                 os.remove(tmp_out_bam_fpath)
             i += 1
     
-    nrecs = int(file_prefix_from_fpath(tmp_out_bam_fpath).split('.')[0])
+    nrecs = int(file_prefix_from_fpath(tmp_out_bam_fpath).split('.')[0]) 
     log.info(f'{nrecs:,d} records processed')
     log.info(f'{total_out:,d} records output')
 
-def correct_UMIs(input_bam_fpath, out_bam_fpath):
+
+def umi_parallel_wrapper(ref_and_input_bam_fpath):
+    ref, input_bam_fpath = ref_and_input_bam_fpath
+    return ref, get_umi_maps_from_bam_file(input_bam_fpath, chrm=ref)
+
+def correct_UMIs(arguments, input_bam_fpath, out_bam_fpath):
     with pysam.AlignmentFile(input_bam_fpath) as bamfile:
         reference_names = bamfile.references
+    reference_names_with_input_bam = [(ref, input_bam_fpath) for ref in reference_names]
 
-    with pysam.AlignmentFile(out_bam_fpath, 'wb', template=pysam.AlignmentFile(input_bam_fpath)) as bam_out:
-        for ref in reference_names:
+    with pysam.AlignmentFile(out_bam_fpath, 'wb', template=pysam.AlignmentFile(input_bam_fpath)) as bam_out, \
+            Pool(arguments.threads) as pool:
+        for i, (ref, umi_map_given_bc) in enumerate(pool.imap_unordered(
+                umi_parallel_wrapper,
+                reference_names_with_input_bam)):
             log.info(f'  {ref}')
-            umi_map_given_bc = get_umi_maps_from_bam_file(input_bam_fpath, chrm=ref)
             for read in pysam.AlignmentFile(input_bam_fpath).fetch(ref):
                 corrected_umi = umi_map_given_bc[read.get_tag('CB')][read.get_tag('UR')]
                 read.set_tag('UB', corrected_umi)
