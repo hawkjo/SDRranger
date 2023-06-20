@@ -64,7 +64,7 @@ def process_RNA_fastqs(arguments):
     star_w_bc_sorted_fname = 'RNA_with_bc.sorted.bam'
     star_w_bc_sorted_fpath = os.path.join(arguments.output_dir, star_w_bc_sorted_fname)
     log.info('Sorting bam...')
-    pysam.sort('-o', star_w_bc_sorted_fpath, star_w_bc_fpath)
+    pysam.sort('-@', str(arguments.threads), '-o', star_w_bc_sorted_fpath, star_w_bc_fpath)
     os.remove(star_w_bc_fpath)  #clean up unsorted bam
     log.info('Indexing bam...')
     pysam.index(star_w_bc_sorted_fpath)
@@ -76,7 +76,7 @@ def process_RNA_fastqs(arguments):
     star_w_bc_umi_sorted_fpath = os.path.join(arguments.output_dir, star_w_bc_umi_sorted_fname)
     correct_UMIs(arguments, star_w_bc_sorted_fpath, star_w_bc_umi_fpath)
     log.info('Sorting bam...')
-    pysam.sort('-o', star_w_bc_umi_sorted_fpath, star_w_bc_umi_fpath)
+    pysam.sort('-@', str(arguments.threads), '-o', star_w_bc_umi_sorted_fpath, star_w_bc_umi_fpath)
     log.info('Indexing bam...')
     pysam.index(star_w_bc_umi_sorted_fpath)
     os.remove(star_w_bc_umi_fpath)
