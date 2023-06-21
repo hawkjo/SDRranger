@@ -1,5 +1,6 @@
 import logging
 import os
+import gzip
 import pysam
 import itertools
 import tempfile
@@ -8,6 +9,7 @@ import subprocess
 import shutil
 from Bio import SeqIO
 from multiprocessing import Pool
+from scipy.sparse import lil_matrix
 from .bc_aligner import CustomBCAligner
 from .bc_decoders import BCDecoder, SBCDecoder
 from .misc import gzip_friendly_open, names_pair, find_paired_fastqs_in_dir, file_prefix_from_fpath
@@ -26,8 +28,28 @@ def process_RNA_fastqs(arguments):
     """
     Output single file with parsed bcs from bc_fastq in read names and seqs from paired_fastq.
     """
+    star_w_bc_fpath = os.path.join(arguments.output_dir, 'RNA_with_bc.bam')
+    star_w_bc_sorted_fpath = os.path.join(arguments.output_dir, 'RNA_with_bc.sorted.bam')
+    star_w_bc_umi_fpath = os.path.join(arguments.output_dir, 'RNA_with_bc_umi.bam')
+    star_w_bc_umi_sorted_fpath = os.path.join(arguments.output_dir, 'RNA_with_bc_umi.sorted.bam')
+    if os.path.exists(star_w_bc_umi_sorted_fpath):
+        log.info('Sorted bam with UMIs found. Skipping ahead...')
+        completed = 4
+    elif os.path.exists(star_w_bc_umi_fpath):
+        log.info('Corrected UMI file found. Skipping ahead...')
+        completed = 3
+    elif os.path.exists(star_w_bc_sorted_fpath):
+        log.info('Sorted STAR results found. Skipping ahead...')
+        completed = 2
+    elif os.path.exists(star_w_bc_fpath):
+        log.info('STAR results found. Skipping ahead...')
+        completed = 1
+    else:
+        completed = 0
+
     if not os.path.exists(arguments.output_dir):
         os.makedirs(arguments.output_dir)
+
     paired_fpaths = find_paired_fastqs_in_dir(arguments.fastq_dir)
     log.info('Files to process:')
     for i, (fpath1, fpath2) in enumerate(paired_fpaths):
@@ -35,53 +57,51 @@ def process_RNA_fastqs(arguments):
         log.info(f'  {fpath2}')
         if i < len(paired_fpaths)-1:
             log.info('  -')
-    bc_fq_idx, paired_fq_idx = determine_bc_and_paired_fastq_idxs(paired_fpaths) # determine which paired end has bcs
-    log.info(f'Detected barcodes in read{bc_fq_idx+1} files')
-    log.info(f'Running STAR alignment...')
-    paired_fq_bam_fpaths = []
-    for tup_fastq_fpaths in paired_fpaths:
-        bc_fq_fpath = tup_fastq_fpaths[bc_fq_idx]
-        paired_fq_fpath = tup_fastq_fpaths[paired_fq_idx]
-        log.info(f'  {paired_fq_fpath}')
-        star_out_dir, star_out_fpath = run_STAR_RNA(arguments, paired_fq_fpath)
-        paired_fq_bam_fpaths.append((bc_fq_fpath, star_out_fpath))
 
-    star_w_bc_fname = 'RNA_with_bc.bam'
-    star_w_bc_fpath = os.path.join(arguments.output_dir, star_w_bc_fname)
-    log.info('Writing output to:')
-    log.info(f'  {star_w_bc_fpath}')
+    if completed < 1:
+        bc_fq_idx, paired_fq_idx = determine_bc_and_paired_fastq_idxs(paired_fpaths) # determine which paired end has bcs
+        log.info(f'Detected barcodes in read{bc_fq_idx+1} files')
+        log.info(f'Running STAR alignment...')
+        paired_fq_bam_fpaths = []
+        for tup_fastq_fpaths in paired_fpaths:
+            bc_fq_fpath = tup_fastq_fpaths[bc_fq_idx]
+            paired_fq_fpath = tup_fastq_fpaths[paired_fq_idx]
+            log.info(f'  {paired_fq_fpath}')
+            star_out_dir, star_out_fpath = run_STAR_RNA(arguments, paired_fq_fpath)
+            paired_fq_bam_fpaths.append((bc_fq_fpath, star_out_fpath))
+    
+        log.info('Writing output to:')
+        log.info(f'  {star_w_bc_fpath}')
+    
+        template_bam = paired_fq_bam_fpaths[0][1]
+        process_fastqs_func = serial_process_RNA_fastqs if arguments.threads == 1 else parallel_process_RNA_fastqs
+        with pysam.AlignmentFile(star_w_bc_fpath, 'wb', template=pysam.AlignmentFile(template_bam)) as star_w_bc_fh:
+            for bc_fq_fpath, star_raw_fpath in paired_fq_bam_fpaths:
+                log.info('Processing files:')
+                log.info(f'  barcode fastq: {bc_fq_fpath}')
+                log.info(f'  paired bam:    {star_raw_fpath}')
+                process_fastqs_func(arguments, bc_fq_fpath, star_raw_fpath, star_w_bc_fh)
+        shutil.rmtree(star_out_dir)  # clean up intermediate STAR files
+    
+    if completed < 2:
+        log.info('Sorting bam...')
+        pysam.sort('-@', str(arguments.threads), '-o', star_w_bc_sorted_fpath, star_w_bc_fpath)
+        os.remove(star_w_bc_fpath)  #clean up unsorted bam
+        log.info('Indexing bam...')
+        pysam.index(star_w_bc_sorted_fpath)
 
-    template_bam = paired_fq_bam_fpaths[0][1]
-    process_fastqs_func = serial_process_RNA_fastqs if arguments.threads == 1 else parallel_process_RNA_fastqs
-    with pysam.AlignmentFile(star_w_bc_fpath, 'wb', template=pysam.AlignmentFile(template_bam)) as star_w_bc_fh:
-        for bc_fq_fpath, star_raw_fpath in paired_fq_bam_fpaths:
-            log.info('Processing files:')
-            log.info(f'  barcode fastq: {bc_fq_fpath}')
-            log.info(f'  paired bam:    {star_raw_fpath}')
-            process_fastqs_func(arguments, bc_fq_fpath, star_raw_fpath, star_w_bc_fh)
-    shutil.rmtree(star_out_dir)  # clean up intermediate STAR files
+    if completed < 3:
+        log.info('Correcting UMIs...')
+        correct_UMIs(arguments, star_w_bc_sorted_fpath, star_w_bc_umi_fpath)
 
-    star_w_bc_sorted_fname = 'RNA_with_bc.sorted.bam'
-    star_w_bc_sorted_fpath = os.path.join(arguments.output_dir, star_w_bc_sorted_fname)
-    log.info('Sorting bam...')
-    pysam.sort('-@', str(arguments.threads), '-o', star_w_bc_sorted_fpath, star_w_bc_fpath)
-    os.remove(star_w_bc_fpath)  #clean up unsorted bam
-    log.info('Indexing bam...')
-    pysam.index(star_w_bc_sorted_fpath)
-
-    log.info('Correcting UMIs...')
-    star_w_bc_umi_fname = 'RNA_with_bc_umi.bam'
-    star_w_bc_umi_fpath = os.path.join(arguments.output_dir, star_w_bc_umi_fname)
-    star_w_bc_umi_sorted_fname = 'RNA_with_bc_umi.sorted.bam'
-    star_w_bc_umi_sorted_fpath = os.path.join(arguments.output_dir, star_w_bc_umi_sorted_fname)
-    correct_UMIs(arguments, star_w_bc_sorted_fpath, star_w_bc_umi_fpath)
-    log.info('Sorting bam...')
-    pysam.sort('-@', str(arguments.threads), '-o', star_w_bc_umi_sorted_fpath, star_w_bc_umi_fpath)
-    log.info('Indexing bam...')
-    pysam.index(star_w_bc_umi_sorted_fpath)
-    os.remove(star_w_bc_umi_fpath)
-    os.remove(star_w_bc_sorted_fpath)
-    os.remove(star_w_bc_sorted_fpath + '.bai')
+    if completed < 4:
+        log.info('Sorting bam...')
+        pysam.sort('-@', str(arguments.threads), '-o', star_w_bc_umi_sorted_fpath, star_w_bc_umi_fpath)
+        log.info('Indexing bam...')
+        pysam.index(star_w_bc_umi_sorted_fpath)
+        os.remove(star_w_bc_umi_fpath)
+        os.remove(star_w_bc_sorted_fpath)
+        os.remove(star_w_bc_sorted_fpath + '.bai')
     log.info('Done')
 
 
@@ -368,3 +388,59 @@ def correct_UMIs(arguments, input_bam_fpath, out_bam_fpath):
                 corrected_umi = umi_map_given_bc[read.get_tag('CB')][read.get_tag('UR')]
                 read.set_tag('UB', corrected_umi)
                 bam_out.write(read)
+
+
+def RNA_count_matrix(arguments, input_bam_fpath):
+    """
+    Counts the reads from the input bam file and outputs sparse matrices of read and UMI counts.
+    """
+    raw_output_dir = os.path.join(arguments.output_dir, 'raw_feature_bc_matrix')
+    if os.path.exists(raw_output_dir):
+        log.info('Matrix output folder exists. Skipping count matrix build')
+        return 
+    else:
+        os.makedirs(raw_output_dir)
+
+    # TODO Warning: for now just counts reads
+    def build_complete_bc(read):
+        bc = read.get_tag('CB')
+        filler = read.get_tag('FB')
+        filler_len = len(filler.split('.')[0])
+        sbc = read.get_tag('SB')
+        umi = read.get_tag('UB')
+        return f'{bc}:{filler_len:d}:{sbc}'
+
+    log.info('Finding all barcodes present...')
+    complete_bcs = set(
+        build_complete_bc(read)
+        for read in pysam.AlignmentFile(input_bam_fpath, threads=arguments.threads-1).fetch()
+        )
+    sorted_complete_bcs = sorted(list(complete_bcs))
+    i_given_complete_bc = {i: comp_bc for i, comp_bc in enumerate(sorted_complete_bcs)}
+
+    with pysam.AlignmentFile(input_bam_fpath) as bamfile:
+        reference_names = bamfile.references
+    sorted_reference_names = sorted(reference_names)
+    j_given_reference = {i: ref for i, ref in enumerate(sorted_reference_names)}
+
+    log.info('Counting reads...')
+    # Build matrix in transpose because bam file is sorted by references (columns of matrix)
+    M_reads_T = lil_matrix((len(sorted_reference_names), len(sorted_complete_bcs)), dtype=np.int)
+    for j, ref in enumerate(sorted_reference_names):
+        for read in pysam.AlignmentFile(input_bam_fpath, threads=arguments.threads-1).fetch():
+            i = i_given_complete_bc[build_complete_bc(read)]
+            M_reads_T[j, i] += 1
+
+    log.info('Writing raw read count matrix...')
+    raw_matrix_fpath = os.path.join(raw_output_dir, 'matrix.mtx.gz')
+    M_reads = M_reads_T.transpose()
+    with gzip.open(raw_matrix_fpath, 'wt') as out:
+        scipy.io.mmwrite(out, M_reads)
+    raw_rows_fpath = os.path.join(raw_output_dir, 'barcodes.tsv.gz')
+    raw_cols_fpath = os.path.join(raw_output_dir, 'features.tsv.gz')
+    for fpath, obj in [
+            (raw_rows_fpath, sorted_complete_bcs), (raw_cols_fpath, sorted_reference_names)
+            ]:
+        with gzip.open(fpath, 'wt') as out:
+            out.write('\n'.join(obj))
+
