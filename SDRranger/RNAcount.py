@@ -9,6 +9,7 @@ import subprocess
 import shutil
 import scipy
 from Bio import SeqIO
+from collections import defaultdict, Counter
 from multiprocessing import Pool
 from scipy.sparse import lil_matrix
 from .bc_aligner import CustomBCAligner
@@ -393,25 +394,32 @@ def correct_UMIs(arguments, input_bam_fpath, out_bam_fpath):
                 bam_out.write(read)
 
 
+def build_complete_bc(read):
+    bc = read.get_tag('CB')
+    filler = read.get_tag('FB')
+    filler_len = len(filler.split('.')[0])
+    sbc = read.get_tag('SB')
+    return f'{bc}:{filler_len:d}:{sbc}'
+
+def count_parallel_wrapper(ref_and_input_bam_fpath):
+    ref, input_bam_fpath = ref_and_input_bam_fpath
+    read_count_given_umi_given_bc = defaultdict(Counter)
+    for read in pysam.AlignmentFile(input_bam_fpath).fetch(ref):
+        read_count_given_umi_given_bc[build_complete_bc(read)][read.get_tag('UB')] += 1
+    return ref, read_count_given_umi_given_bc
+
 def RNA_count_matrix(arguments, input_bam_fpath):
     """
     Counts the reads from the input bam file and outputs sparse matrices of read and UMI counts.
     """
-    raw_output_dir = os.path.join(arguments.output_dir, 'raw_feature_bc_matrix')
-    if os.path.exists(raw_output_dir):
-        log.info('Matrix output folder exists. Skipping count matrix build')
-        return 
-    else:
-        os.makedirs(raw_output_dir)
-
-    # TODO Warning: for now just counts reads
-    def build_complete_bc(read):
-        bc = read.get_tag('CB')
-        filler = read.get_tag('FB')
-        filler_len = len(filler.split('.')[0])
-        sbc = read.get_tag('SB')
-        umi = read.get_tag('UB')
-        return f'{bc}:{filler_len:d}:{sbc}'
+    raw_reads_output_dir = os.path.join(arguments.output_dir, 'raw_reads_bc_matrix')
+    raw_umis_output_dir = os.path.join(arguments.output_dir, 'raw_umis_bc_matrix')
+    for out_dir in [raw_reads_output_dir, raw_umis_output_dir]:
+        if os.path.exists(out_dir):
+            log.info('Matrix output folder exists. Skipping count matrix build')
+            return 
+        else:
+            os.makedirs(out_dir)
 
     log.info('Finding all barcodes present...')
     complete_bcs = set(
@@ -423,26 +431,34 @@ def RNA_count_matrix(arguments, input_bam_fpath):
 
     with pysam.AlignmentFile(input_bam_fpath) as bamfile:
         reference_names = bamfile.references
+    reference_names_with_input_bam = [(ref, input_bam_fpath) for ref in reference_names]
     j_given_reference = {ref: j for j, ref in enumerate(reference_names)}
 
     log.info('Counting reads...')
     # Build matrix in transpose because bam file is sorted by references (columns of matrix)
     M_reads_T = lil_matrix((len(reference_names), len(sorted_complete_bcs)), dtype=int)
-    for j, ref in enumerate(reference_names):
-        for read in pysam.AlignmentFile(input_bam_fpath, threads=arguments.threads-1).fetch():
-            i = i_given_complete_bc[build_complete_bc(read)]
-            M_reads_T[j, i] += 1
+    M_umis_T = lil_matrix((len(reference_names), len(sorted_complete_bcs)), dtype=int)
+    with Pool(arguments.threads) as pool:
+        for j, (ref, read_count_given_umi_given_bc) in enumerate(pool.imap_unordered(
+                count_parallel_wrapper,
+                reference_names_with_input_bam)):
+            for comp_bc, umi_cntr in read_count_given_umi_given_bc.items():
+                i = i_given_complete_bc[comp_bc]
+                for umi, count in umi_cntr.items():
+                    M_reads_T[j, i] += count
+                    M_umis_T[j, i] += 1
 
     log.info('Writing raw read count matrix...')
-    raw_matrix_fpath = os.path.join(raw_output_dir, 'matrix.mtx.gz')
-    M_reads = M_reads_T.transpose()
-    with gzip.open(raw_matrix_fpath, 'wb') as out:
-        scipy.io.mmwrite(out, M_reads)
-    raw_rows_fpath = os.path.join(raw_output_dir, 'barcodes.tsv.gz')
-    raw_cols_fpath = os.path.join(raw_output_dir, 'features.tsv.gz')
-    for fpath, obj in [
-            (raw_rows_fpath, sorted_complete_bcs), (raw_cols_fpath, reference_names)
-            ]:
-        with gzip.open(fpath, 'wt') as out:
-            out.write('\n'.join(obj))
+    for out_dir, M_T in [(raw_reads_output_dir, M_reads_T), (raw_umis_output_dir, M_umis_T)]:
+        raw_matrix_fpath = os.path.join(out_dir, 'matrix.mtx.gz')
+        M = M_T.transpose()
+        with gzip.open(raw_matrix_fpath, 'wb') as out:
+            scipy.io.mmwrite(out, M)
+        raw_rows_fpath = os.path.join(out_dir, 'barcodes.tsv.gz')
+        raw_cols_fpath = os.path.join(out_dir, 'features.tsv.gz')
+        for fpath, obj in [
+                (raw_rows_fpath, sorted_complete_bcs), (raw_cols_fpath, reference_names)
+                ]:
+            with gzip.open(fpath, 'wt') as out:
+                out.write('\n'.join(obj))
 
