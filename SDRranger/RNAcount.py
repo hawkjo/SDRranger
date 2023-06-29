@@ -8,14 +8,13 @@ import numpy as np
 import subprocess
 import shutil
 import scipy
+import .misc
 from Bio import SeqIO
 from collections import defaultdict, Counter
 from multiprocessing import Pool
 from scipy.sparse import lil_matrix
 from .bc_aligner import CustomBCAligner
 from .bc_decoders import BCDecoder, SBCDecoder
-from .misc import gzip_friendly_open, names_pair, find_paired_fastqs_in_dir, file_prefix_from_fpath
-from .constants import commonseq1_options, commonseq2_RNA 
 from .umi import get_umi_maps_from_bam_file
 
 
@@ -52,7 +51,7 @@ def process_RNA_fastqs(arguments):
     if not os.path.exists(arguments.output_dir):
         os.makedirs(arguments.output_dir)
 
-    paired_fpaths = find_paired_fastqs_in_dir(arguments.fastq_dir)
+    paired_fpaths = misc.find_paired_fastqs_in_dir(arguments.fastq_dir)
     log.info('Files to process:')
     for i, (fpath1, fpath2) in enumerate(paired_fpaths):
         log.info(f'  {fpath1}')
@@ -61,7 +60,7 @@ def process_RNA_fastqs(arguments):
             log.info('  -')
 
     if completed < 1:
-        bc_fq_idx, paired_fq_idx = determine_bc_and_paired_fastq_idxs(paired_fpaths) # determine which paired end has bcs
+        bc_fq_idx, paired_fq_idx = misc.determine_bc_and_paired_fastq_idxs(paired_fpaths, 'RNA') 
         log.info(f'Detected barcodes in read{bc_fq_idx+1} files')
         log.info(f'Running STAR alignment...')
         paired_fq_bam_fpaths = []
@@ -116,7 +115,7 @@ def run_STAR_RNA(arguments, fastq_fpath):
     Returns STAR output directory and bam path.
     """
     star_out_dir = os.path.join(arguments.output_dir, 'STAR_files')
-    fastq_bname = file_prefix_from_fpath(fastq_fpath)
+    fastq_bname = misc.file_prefix_from_fpath(fastq_fpath)
     out_prefix = os.path.join(star_out_dir, f'{fastq_bname}_')
     cmd_star = [
         'STAR',
@@ -177,39 +176,15 @@ def RNA_paired_recs_iterator(bc_fq_fpath, p_bam_fpath):
     """
     Iterates bc fastq reads with matching paired bam records.
     """
-    bc_fq_iter = iter(SeqIO.parse(gzip_friendly_open(bc_fq_fpath), 'fastq'))
+    bc_fq_iter = iter(SeqIO.parse(misc.gzip_friendly_open(bc_fq_fpath), 'fastq'))
     for p_read in pysam.AlignmentFile(p_bam_fpath).fetch(until_eof=True):
-        bc_rec = next(rec for rec in bc_fq_iter if names_pair(str(rec.id), str(p_read.qname)))
+        bc_rec = next(rec for rec in bc_fq_iter if misc.names_pair(str(rec.id), str(p_read.qname)))
         yield bc_rec, p_read
-
-
-def determine_bc_and_paired_fastq_idxs(paired_fpaths):
-    """Returns (bc_fq_idx, paired_fq_idx), based on first pair of fastqs"""
-    fpath0, fpath1 = paired_fpaths[0]
-    avg_score0 = average_align_score_of_first_recs(fpath0)
-    avg_score1 = average_align_score_of_first_recs(fpath1)
-    return (0, 1) if avg_score0 > avg_score1 else (1, 0)  
-
-def build_RNA_bc_aligners():
-    """Helper function, kept as function for parallelism"""
-    return [CustomBCAligner('N'*9, cso, 'N'*9, commonseq2_RNA, 'N'*8, 'N'*8) for cso in commonseq1_options]
-
-def average_align_score_of_first_recs(fastq_fpath, n_seqs=500):
-    """Return average alignment score of first n_seqs records"""
-    aligners = build_RNA_bc_aligners()
-    first_scores = []
-    for i, rec in enumerate(SeqIO.parse(gzip_friendly_open(fastq_fpath), 'fastq')):
-        scores_and_pieces = [al.find_norm_score_and_pieces(str(rec.seq)) for al in aligners]
-        raw_score, raw_pieces = max(scores_and_pieces)
-        first_scores.append(raw_score)
-        if i >= n_seqs:
-            break
-    return np.average(first_scores)
 
 
 def serial_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_bc_fh):
     log.info('Building aligners and barcode decoders')
-    aligners = build_RNA_bc_aligners()
+    aligners = misc.build_RNA_bc_aligners()
     bcd = BCDecoder(arguments.barcode_whitelist, arguments.max_bc_err_decode)
     sbcd = SBCDecoder(arguments.sample_barcode_whitelist, arguments.max_sbc_err_decode, arguments.sbc_reject_delta)
 
@@ -281,7 +256,7 @@ def process_chunk_of_reads(args_and_fpaths):
     Processing chunks of reads. Required to build aligners in each parallel process.
     """
     arguments, thresh, (tmp_fq_fpath, tmp_bam_fpath, tmp_out_bam_fpath, template_bam_fpath) = args_and_fpaths
-    aligners = build_RNA_bc_aligners()
+    aligners = misc.build_RNA_bc_aligners()
     bcd = BCDecoder(arguments.barcode_whitelist, arguments.max_bc_err_decode)
     sbcd = SBCDecoder(arguments.sample_barcode_whitelist, arguments.max_sbc_err_decode, arguments.sbc_reject_delta)
     with pysam.AlignmentFile(tmp_out_bam_fpath, 'wb', template=pysam.AlignmentFile(template_bam_fpath)) as out:
@@ -303,7 +278,7 @@ def parallel_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_b
     of helper functions
     """
     chunksize=100000
-    aligners = build_RNA_bc_aligners()
+    aligners = misc.build_RNA_bc_aligners()
     bcd = BCDecoder(arguments.barcode_whitelist, arguments.max_bc_err_decode)
     sbcd = SBCDecoder(arguments.sample_barcode_whitelist, arguments.max_sbc_err_decode, arguments.sbc_reject_delta)
     with Pool(arguments.threads) as pool, \
@@ -368,7 +343,7 @@ def parallel_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_b
                 os.remove(tmp_out_bam_fpath)
             i += 1
     
-    nrecs = int(file_prefix_from_fpath(tmp_out_bam_fpath).split('.')[0]) 
+    nrecs = int(misc.file_prefix_from_fpath(tmp_out_bam_fpath).split('.')[0]) 
     log.info(f'{nrecs:,d} records processed')
     log.info(f'{total_out:,d} records output')
 
