@@ -97,7 +97,7 @@ def process_gDNA_fastqs(arguments):
 
         log.info(f'Running STAR alignment...')
         star_out_dirs = set()
-        star_bam_fpaths = []
+        star_bam_and_tags_fpaths = []
         for R1_fpath, R2_fpath, tags_fpath in paired_align_fqs_and_tags_fpaths:
             log.info(f'  {R1_fpath}')
             log.info(f'  {R2_fpath}')
@@ -105,7 +105,14 @@ def process_gDNA_fastqs(arguments):
                 log.info('  -')
             star_out_dir, star_out_fpath = run_STAR_gDNA(arguments, R1_fpath, R2_fpath)
             star_out_dirs.add(star_out_dir)
-            star_bam_fpaths.append(star_out_fpath)
+            star_bam_and_tags_fpaths.append((star_out_fpath, tags_fpath))
+
+        log.info('Adding barcode tags to mapped reads...')
+        template_bam_fpath = star_bam_and_tags_fpaths[0][0]
+        with pysam.AlignmentFile(star_w_bc_fpath, 'wb', template=pysam.AlignmentFile(template_bam_fpath)) as bam_out:
+            for star_out_fpath, tags_fpath in star_bam_and_tags_fpaths:
+                for read in gDNA_add_tags_to_reads(tags_fpath, star_out_fpath):
+                    bam_out.write(read)
 
     if True:
         if True:
@@ -186,14 +193,26 @@ def process_bc_rec(bc_rec, aligners, bcd):
     return raw_score, new_rec, tags
 
 
-def gDNA_paired_recs_iterator(bc_fq_fpath, p_bam_fpath):
+def build_tags_iter(tags_fpath):
+    for line in open(tags_fpath):
+        words = line.strip().split('\t')
+        read_name = words[0]
+        tags = [word.split(':') for word in words[1:]]
+        yield read_name, tags
+
+
+def gDNA_add_tags_to_reads(tags_fpath, bam_fpath):
     """
-    Iterates bc fastq reads with matching paired bam records.
+    Iterates bam reads and matching tags records and adds tags to reads.
     """
-    bc_fq_iter = iter(SeqIO.parse(misc.gzip_friendly_open(bc_fq_fpath), 'fastq'))
-    for p_read in pysam.AlignmentFile(p_bam_fpath).fetch(until_eof=True):
-        bc_rec = next(rec for rec in bc_fq_iter if misc.names_pair(str(rec.id), str(p_read.qname)))
-        yield bc_rec, p_read
+    tags_iter = build_tags_iter(tags_fpath)
+    read_name = 'Lorem ipsum'
+    for read in pysam.AlignmentFile(bam_fpath).fetch(until_eof=True):
+        while not misc.names_pair(read_name, str(read.qname)):
+            read_name, tags = next(tags_iter)
+        for name, val in tags:
+            read.set_tag(name, val)
+        yield read
 
 
 def output_rec_name_and_tags(rec, tags, out_fh):
