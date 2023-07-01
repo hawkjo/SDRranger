@@ -113,12 +113,8 @@ def process_gDNA_fastqs(arguments):
             for star_out_fpath, tags_fpath in star_bam_and_tags_fpaths:
                 for read in gDNA_add_tags_to_reads(tags_fpath, star_out_fpath):
                     bam_out.write(read)
-
-    if True:
-        if True:
-            return
-    
-        shutil.rmtree(star_out_dir)  # clean up intermediate STAR files
+        for star_out_dir in star_out_dirs:
+            shutil.rmtree(star_out_dir)  # clean up intermediate STAR files
     
     if completed < 2:
         log.info('Sorting bam...')
@@ -127,6 +123,8 @@ def process_gDNA_fastqs(arguments):
         log.info('Indexing bam...')
         pysam.index(star_w_bc_sorted_fpath)
 
+    if True:
+        return
     gDNA_count_matrix(arguments, star_w_bc_umi_sorted_fpath)
     log.info('Done')
 
@@ -384,33 +382,11 @@ def parallel_process_gDNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_
     log.info(f'{total_out:,d} records output')
 
 
-def umi_parallel_wrapper(ref_and_input_bam_fpath):
-    ref, input_bam_fpath = ref_and_input_bam_fpath
-    return ref, get_umi_maps_from_bam_file(input_bam_fpath, chrm=ref)
-
-def correct_UMIs(arguments, input_bam_fpath, out_bam_fpath):
-    with pysam.AlignmentFile(input_bam_fpath) as bamfile:
-        reference_names = bamfile.references
-    reference_names_with_input_bam = [(ref, input_bam_fpath) for ref in reference_names]
-
-    with pysam.AlignmentFile(out_bam_fpath, 'wb', template=pysam.AlignmentFile(input_bam_fpath)) as bam_out, \
-            Pool(arguments.threads) as pool:
-        for i, (ref, umi_map_given_bc) in enumerate(pool.imap_unordered(
-                umi_parallel_wrapper,
-                reference_names_with_input_bam)):
-            log.info(f'  {ref}')
-            for read in pysam.AlignmentFile(input_bam_fpath).fetch(ref):
-                corrected_umi = umi_map_given_bc[read.get_tag('CB')][read.get_tag('UR')]
-                read.set_tag('UB', corrected_umi)
-                bam_out.write(read)
-
-
 def build_complete_bc(read):
     bc = read.get_tag('CB')
     filler = read.get_tag('FB')
     filler_len = len(filler.split('.')[0])
-    sbc = read.get_tag('SB')
-    return f'{bc}:{filler_len:d}:{sbc}'
+    return f'{bc}:{filler_len:d}'
 
 def count_parallel_wrapper(ref_and_input_bam_fpath):
     ref, input_bam_fpath = ref_and_input_bam_fpath
