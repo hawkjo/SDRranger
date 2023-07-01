@@ -2,6 +2,8 @@ import os
 import gzip
 import glob
 import logging
+import numpy as np
+from Bio import SeqIO
 from .bc_aligner import CustomBCAligner
 from .constants import commonseq1_options, commonseq2_RNA, commonseq2_gDNA
 

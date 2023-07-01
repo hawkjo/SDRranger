@@ -8,7 +8,7 @@ import numpy as np
 import subprocess
 import shutil
 import scipy
-import .misc
+from . import misc
 from Bio import SeqIO
 from collections import defaultdict, Counter
 from multiprocessing import Pool
@@ -52,9 +52,48 @@ def process_gDNA_fastqs(arguments):
         if i < len(paired_fpaths)-1:
             log.info('  -')
 
+    # find barcodes, write to file, remove from reads before mapping
+    # map reads
+    # Add barcodes etc to bam file
+    # Sort, index
     if completed < 1:
-        bc_fq_idx, paired_fq_idx = determine_bc_and_paired_fastq_idxs(paired_fpaths, 'gDNA') 
+        bc_fq_idx, paired_fq_idx = misc.determine_bc_and_paired_fastq_idxs(paired_fpaths, 'gDNA') 
         log.info(f'Detected barcodes in read{bc_fq_idx+1} files')
+        log.info('Writing output to:')
+        log.info(f'  {star_w_bc_fpath}')
+    
+        paired_align_fqs_and_tags_fpaths = []
+        process_fastqs_func = serial_process_gDNA_fastqs if arguments.threads == 1 else parallel_process_gDNA_fastqs
+        for fpath_tup in paired_fpaths:
+            bc_fq_fpath = fpath_tup[bc_fq_idx]
+            paired_fq_fpath = fpath_tup[paired_fq_idx]
+            sans_bc_fq_fname = f'sans_bc_{misc.file_prefix_from_fpath(bc_fq_fpath)}.fq'
+            sans_bc_fq_fpath = os.path.join(arguments.output_dir, sans_bc_fq_fname)
+            sans_bc_paired_fq_fname = f'sans_paired_{misc.file_prefix_from_fpath(paired_fq_fpath)}.fq'
+            sans_bc_paired_fq_fpath = os.path.join(arguments.output_dir, sans_bc_paired_fq_fname)
+            tags_fname = f'rec_names_and_tags_{misc.file_prefix_from_fpath(bc_fq_fpath)}.txt'
+            tags_fpath = os.path.join(arguments.output_dir, tags_fname)
+            if bc_fq_idx == 0:
+                paired_align_fqs_and_tags_fpaths.append((sans_bc_fq_fpath, sans_bc_paired_fq_fpath, tags_fpath))
+            else:
+                paired_align_fqs_and_tags_fpaths.append((sans_bc_paired_fq_fpath, sans_bc_fq_fpath, tags_fpath))
+
+            log.info('Processing files:')
+            log.info(f'  barcode fastq: {bc_fq_fpath}')
+            log.info(f'  paired fastq:  {paired_fq_fpath}')
+            log.info(f'  sans-bc fastq: {sans_bc_fq_fpath}')
+            log.info(f'  tags file:     {tags_fpath}')
+            process_fastqs_func(
+                    arguments, 
+                    bc_fq_fpath, 
+                    paired_fq_fpath, 
+                    sans_bc_fq_fpath,
+                    sans_bc_paired_fq_fpath, 
+                    tags_fpath)
+
+    if True:
+        if True:
+            return
         log.info(f'Running STAR alignment...')
         paired_fq_bam_fpaths = []
         for tup_fastq_fpaths in paired_fpaths:
@@ -64,17 +103,6 @@ def process_gDNA_fastqs(arguments):
             star_out_dir, star_out_fpath = run_STAR_gDNA(arguments, paired_fq_fpath)
             paired_fq_bam_fpaths.append((bc_fq_fpath, star_out_fpath))
     
-        log.info('Writing output to:')
-        log.info(f'  {star_w_bc_fpath}')
-    
-        template_bam = paired_fq_bam_fpaths[0][1]
-        process_fastqs_func = serial_process_gDNA_fastqs if arguments.threads == 1 else parallel_process_gDNA_fastqs
-        with pysam.AlignmentFile(star_w_bc_fpath, 'wb', template=pysam.AlignmentFile(template_bam)) as star_w_bc_fh:
-            for bc_fq_fpath, star_raw_fpath in paired_fq_bam_fpaths:
-                log.info('Processing files:')
-                log.info(f'  barcode fastq: {bc_fq_fpath}')
-                log.info(f'  paired bam:    {star_raw_fpath}')
-                process_fastqs_func(arguments, bc_fq_fpath, star_raw_fpath, star_w_bc_fh)
         shutil.rmtree(star_out_dir)  # clean up intermediate STAR files
     
     if completed < 2:
@@ -88,25 +116,27 @@ def process_gDNA_fastqs(arguments):
     log.info('Done')
 
 
-def run_STAR_gDNA(arguments, fastq_fpath):
+def run_STAR_gDNA(arguments, reads1_fpath, reads2_fpath):
     """
     Run STAR aligner for gDNA files.
 
     Returns STAR output directory and bam path.
     """
     star_out_dir = os.path.join(arguments.output_dir, 'STAR_files')
-    fastq_bname = misc.file_prefix_from_fpath(fastq_fpath)
-    out_prefix = os.path.join(star_out_dir, f'{fastq_bname}_')
+    reads1_bname = misc.file_prefix_from_fpath(reads1_fpath)
+    out_prefix = os.path.join(star_out_dir, f'{reads1_bname}_')
     cmd_star = [
         'STAR',
         f'--runThreadN 1', # required to keep order matching with fastq file
         f'--genomeDir {arguments.star_ref_dir}',
-        f'--readFilesIn {fastq_fpath}',
+        f'--readFilesIn {reads1_fpath} {reads2_fpath}',
         f'--outFileNamePrefix {out_prefix}',
         '--outFilterMultimapNmax 1', 
         '--outSAMtype BAM Unsorted', 
     ]
-    if fastq_fpath.endswith('gz'):
+    if reads1_fpath.endswith('.gz'):
+        if not reads2_fpath.endswith('.gz'):
+            raise ValueError('Paired read files must be both zipped or both unzipped')
         cmd_star.append('--readFilesCommand zcat')
     star_out_fpath = f'{out_prefix}Aligned.out.bam'
     if os.path.exists(star_out_fpath):
@@ -116,40 +146,36 @@ def run_STAR_gDNA(arguments, fastq_fpath):
     return star_out_dir, star_out_fpath
 
 
-def process_bc_rec_and_p_read(bc_rec, p_read, aligners, bcd, sbcd):
+def process_bc_rec(bc_rec, aligners, bcd):
     """
-    Find barcodes etc in bc_rec and add them as tags to p_read
+    Find barcodes etc in bc_rec 
     """
     bc_seq = str(bc_rec.seq)
-    scores_and_pieces = [al.find_norm_score_and_pieces(bc_seq) for al in aligners]
-    raw_score, raw_pieces = max(scores_and_pieces)
-    raw_bc1, raw_bc2, raw_sbc = [raw_pieces[i].upper().replace('N', 'A') for i in [0, 2, 4]]
+    scores_pieces_end_pos = [al.find_norm_score_pieces_and_end_pos(bc_seq) for al in aligners]
+    raw_score, raw_pieces, raw_end_pos = max(scores_pieces_end_pos)
+    raw_bc1, raw_bc2 = [raw_pieces[i].upper().replace('N', 'A') for i in [0, 2]]
 
     bc1 = bcd.decode(raw_bc1)
     bc2 = bcd.decode(raw_bc2)
-    sbc = sbcd.decode(raw_sbc)
-    best_aligner = next(al for al, (s, p) in zip(aligners, scores_and_pieces) if s == raw_score)
+    best_aligner = next(al for al, (s, p, e) in zip(aligners, scores_pieces_end_pos) if s == raw_score)
     commonseq1, commonseq2 = [best_aligner.prefixes[i] for i in [1, 3]]
-    corrected_pieces = [bc1, commonseq1, bc2, commonseq2, sbc]
+    corrected_pieces = [bc1, commonseq1, bc2, commonseq2]
     if None in corrected_pieces:
-        return raw_score, None
+        return raw_score, None, None
 
-    new_aligner = CustomBCAligner(*corrected_pieces, 'N'*8)
-    new_score, new_pieces = new_aligner.find_norm_score_and_pieces(bc_seq)
-
-    # Add tags for corrected and raw:
+    tags = []
     # Cell barcode
-    p_read.set_tag('CB', f'{bc1}.{bc2}')
-    p_read.set_tag('CR', f'{raw_pieces[0]}.{raw_pieces[2]}')
-    # Sample barcode
-    p_read.set_tag('SB', sbc)
-    p_read.set_tag('SR', raw_pieces[4])
+    tags.append(('CB', f'{bc1}.{bc2}'))
+    tags.append(('CR', f'{raw_pieces[0]}.{raw_pieces[2]}'))
     # Filler sequences
-    p_read.set_tag('FB', f'{commonseq1}.{commonseq2}')
-    p_read.set_tag('FR', f'{raw_pieces[1]}.{raw_pieces[3]}')
-    # And raw UMI
-    p_read.set_tag('UR', new_pieces[-1])
-    return raw_score, p_read
+    tags.append(('FB', f'{commonseq1}.{commonseq2}'))
+    tags.append(('FR', f'{raw_pieces[1]}.{raw_pieces[3]}'))
+
+    new_rec = bc_rec[raw_end_pos:]
+    new_rec.id = bc_rec.id
+    new_rec.description = bc_rec.description
+
+    return raw_score, new_rec, tags
 
 
 def gDNA_paired_recs_iterator(bc_fq_fpath, p_bam_fpath):
@@ -162,42 +188,44 @@ def gDNA_paired_recs_iterator(bc_fq_fpath, p_bam_fpath):
         yield bc_rec, p_read
 
 
+def output_rec_name_and_tags(rec, tags, out_fh):
+    out_fh.write('\t'.join([f'{str(rec.id)}'] + [f'{tag}:{val}' for tag, val in tags]) + '\n')
 
-def serial_process_gDNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_bc_fh):
+
+def serial_process_gDNA_fastqs(arguments, bc_fq_fpath, paired_fq_fpath, sans_bc_fq_fpath, sans_bc_paired_fq_fpath, tags_fpath):
     log.info('Building aligners and barcode decoders')
     aligners = misc.build_gDNA_bc_aligners()
     bcd = BCDecoder(arguments.barcode_whitelist, arguments.max_bc_err_decode)
-    sbcd = SBCDecoder(arguments.sample_barcode_whitelist, arguments.max_sbc_err_decode, arguments.sbc_reject_delta)
 
     log.info(f'Processing first {n_first_seqs:,d} for score threshold...')
-    first_scores_and_reads = []
-    for i, (bc_rec, p_read) in enumerate(
-            gDNA_paired_recs_iterator(bc_fq_fpath, star_raw_fpath)
-            ):
-        first_scores_and_reads.append(process_bc_rec_and_p_read(bc_rec, p_read, aligners, bcd, sbcd))
+    first_scores_recs_tags = []
+    for i, (bc_rec, paired_red) in enumerate(zip(
+        SeqIO.parse(misc.gzip_friendly_open(bc_fq_fpath), 'fastq'),
+        SeqIO.parse(misc.gzip_friendly_open(paired_fq_fpath), 'fastq'))):
+        first_scores_recs_tags.append(process_bc_rec(bc_rec, aligners, bcd))
         if i >= n_first_seqs:
             break
 
-    scores = [score for score, read in first_scores_and_reads]
+    scores = [score for score, rec, tags in first_scores_recs_tags]
     thresh = np.average(scores) - 2 * np.std(scores)
     log.info(f'Score threshold: {thresh:.2f}')
-    out_reads = [read for score, read in first_scores_and_reads if score >= thresh and read]
-    total_out = len(out_reads)
-    for read in out_reads:
-        star_w_bc_fh.write(read)
 
-    log.info('Continuing...')
-    for i, (bc_rec, p_read) in enumerate(
-            gDNA_paired_recs_iterator(bc_fq_fpath, star_raw_fpath)
-            ):
-        if i <= n_first_seqs:
-            continue
-        if i % 100000 == 0 and i > 0:
-            log.info(f'  {i:,d}')
-        score, read = process_bc_rec_and_p_read(bc_rec, p_read, aligners, bcd, sbcd)
-        if score >= thresh and read:
-            total_out += 1
-            star_w_bc_fh.write(read)
+    total_out = 0
+    with open(sans_bc_fq_fpath, 'w') as bc_fq_fh, \
+            open(sans_bc_paired_fq_fpath, 'w') as paired_fq_fh, \
+            open(tags_fpath, 'w') as tag_fh:
+        log.info('Continuing...')
+        for i, (bc_rec, paired_rec) in enumerate(zip(
+            SeqIO.parse(misc.gzip_friendly_open(bc_fq_fpath), 'fastq'),
+            SeqIO.parse(misc.gzip_friendly_open(paired_fq_fpath), 'fastq'))):
+            if i % 100000 == 0 and i > 0:
+                log.info(f'  {i:,d}')
+            score, sans_bc_rec, tags = process_bc_rec(bc_rec, aligners, bcd)
+            if score >= thresh and sans_bc_rec:
+                total_out += 1
+                SeqIO.write(sans_bc_rec, bc_fq_fh, 'fastq')
+                SeqIO.write(paired_rec, paired_fq_fh, 'fastq')
+                output_rec_name_and_tags(sans_bc_rec, tags, tag_fh)
     log.info(f'{i+1:,d} records processed')
     log.info(f'{total_out:,d} records output')
 
@@ -242,7 +270,7 @@ def process_chunk_of_reads(args_and_fpaths):
     sbcd = SBCDecoder(arguments.sample_barcode_whitelist, arguments.max_sbc_err_decode, arguments.sbc_reject_delta)
     with pysam.AlignmentFile(tmp_out_bam_fpath, 'wb', template=pysam.AlignmentFile(template_bam_fpath)) as out:
         for bc_rec, p_read in gDNA_paired_recs_iterator(tmp_fq_fpath, tmp_bam_fpath):
-            score, read = process_bc_rec_and_p_read(bc_rec, p_read, aligners, bcd, sbcd)
+            score, read = process_bc_rec(bc_rec, aligners, bcd)
             if score >= thresh and read:
                 out.write(read)
     os.remove(tmp_fq_fpath)
@@ -265,15 +293,15 @@ def parallel_process_gDNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_
     with Pool(arguments.threads) as pool, \
             tempfile.TemporaryDirectory(prefix='/dev/shm/') as tmpdirname:
         log.info(f'Processing first {n_first_seqs:,d} for score threshold...')
-        first_scores_and_reads = []
+        first_scores_and_pieces = []
         for i, (bc_rec, p_read) in enumerate(
                 gDNA_paired_recs_iterator(bc_fq_fpath, star_raw_fpath)
                 ):
-            first_scores_and_reads.append(process_bc_rec_and_p_read(bc_rec, p_read, aligners, bcd, sbcd))
+            first_scores_and_pieces.append(process_bc_rec(bc_rec, aligners, bcd))
             if i >= n_first_seqs:
                 break
 
-        scores = [score for score, read in first_scores_and_reads]
+        scores = [score for score, read in first_scores_and_pieces]
         thresh = np.average(scores) - 2 * np.std(scores)
         log.info(f'Score threshold: {thresh:.2f}')
 

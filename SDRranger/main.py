@@ -19,7 +19,7 @@ from docopt import docopt
 from .__init__ import __version__
 from .config import CommandLineArguments
 from .RNAcount import process_RNA_fastqs
-from .DNAcount import process_gDNA_fastqs 
+from .gDNAcount import process_gDNA_fastqs 
 
 
 def main(**kwargs):

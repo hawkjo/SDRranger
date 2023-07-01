@@ -8,7 +8,7 @@ import numpy as np
 import subprocess
 import shutil
 import scipy
-import .misc
+from . import misc
 from Bio import SeqIO
 from collections import defaultdict, Counter
 from multiprocessing import Pool
