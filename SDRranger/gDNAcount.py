@@ -82,26 +82,34 @@ def process_gDNA_fastqs(arguments):
             log.info(f'  barcode fastq: {bc_fq_fpath}')
             log.info(f'  paired fastq:  {paired_fq_fpath}')
             log.info(f'  sans-bc fastq: {sans_bc_fq_fpath}')
+            log.info(f'  sans-bc fastq: {sans_bc_paired_fq_fpath}')
             log.info(f'  tags file:     {tags_fpath}')
-            process_fastqs_func(
-                    arguments, 
-                    bc_fq_fpath, 
-                    paired_fq_fpath, 
-                    sans_bc_fq_fpath,
-                    sans_bc_paired_fq_fpath, 
-                    tags_fpath)
+            if all(os.path.exists(fpath) for fpath in [sans_bc_fq_fpath, sans_bc_paired_fq_fpath, tags_fpath]):
+                log.info('Barcode output found. Skipping barcode detection')
+            else:
+                process_fastqs_func(
+                        arguments, 
+                        bc_fq_fpath, 
+                        paired_fq_fpath, 
+                        sans_bc_fq_fpath,
+                        sans_bc_paired_fq_fpath, 
+                        tags_fpath)
+
+        log.info(f'Running STAR alignment...')
+        star_out_dirs = set()
+        star_bam_fpaths = []
+        for R1_fpath, R2_fpath, tags_fpath in paired_align_fqs_and_tags_fpaths:
+            log.info(f'  {R1_fpath}')
+            log.info(f'  {R2_fpath}')
+            if R1_fpath != paired_align_fqs_and_tags_fpaths[-1][0]:
+                log.info('  -')
+            star_out_dir, star_out_fpath = run_STAR_gDNA(arguments, R1_fpath, R2_fpath)
+            star_out_dirs.add(star_out_dir)
+            star_bam_fpaths.append(star_out_fpath)
 
     if True:
         if True:
             return
-        log.info(f'Running STAR alignment...')
-        paired_fq_bam_fpaths = []
-        for tup_fastq_fpaths in paired_fpaths:
-            bc_fq_fpath = tup_fastq_fpaths[bc_fq_idx]
-            paired_fq_fpath = tup_fastq_fpaths[paired_fq_idx]
-            log.info(f'  {paired_fq_fpath}')
-            star_out_dir, star_out_fpath = run_STAR_gDNA(arguments, paired_fq_fpath)
-            paired_fq_bam_fpaths.append((bc_fq_fpath, star_out_fpath))
     
         shutil.rmtree(star_out_dir)  # clean up intermediate STAR files
     
@@ -116,26 +124,26 @@ def process_gDNA_fastqs(arguments):
     log.info('Done')
 
 
-def run_STAR_gDNA(arguments, reads1_fpath, reads2_fpath):
+def run_STAR_gDNA(arguments, R1_fpath, R2_fpath):
     """
     Run STAR aligner for gDNA files.
 
     Returns STAR output directory and bam path.
     """
     star_out_dir = os.path.join(arguments.output_dir, 'STAR_files')
-    reads1_bname = misc.file_prefix_from_fpath(reads1_fpath)
-    out_prefix = os.path.join(star_out_dir, f'{reads1_bname}_')
+    R1_bname = misc.file_prefix_from_fpath(R1_fpath)
+    out_prefix = os.path.join(star_out_dir, f'{R1_bname}_')
     cmd_star = [
         'STAR',
         f'--runThreadN 1', # required to keep order matching with fastq file
         f'--genomeDir {arguments.star_ref_dir}',
-        f'--readFilesIn {reads1_fpath} {reads2_fpath}',
+        f'--readFilesIn {R1_fpath} {R2_fpath}',
         f'--outFileNamePrefix {out_prefix}',
         '--outFilterMultimapNmax 1', 
         '--outSAMtype BAM Unsorted', 
     ]
-    if reads1_fpath.endswith('.gz'):
-        if not reads2_fpath.endswith('.gz'):
+    if R1_fpath.endswith('.gz'):
+        if not R2_fpath.endswith('.gz'):
             raise ValueError('Paired read files must be both zipped or both unzipped')
         cmd_star.append('--readFilesCommand zcat')
     star_out_fpath = f'{out_prefix}Aligned.out.bam'
