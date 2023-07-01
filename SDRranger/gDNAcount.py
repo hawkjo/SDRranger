@@ -123,9 +123,7 @@ def process_gDNA_fastqs(arguments):
         log.info('Indexing bam...')
         pysam.index(star_w_bc_sorted_fpath)
 
-    if True:
-        return
-    gDNA_count_matrix(arguments, star_w_bc_umi_sorted_fpath)
+    gDNA_count_matrix(arguments, star_w_bc_sorted_fpath)
     log.info('Done')
 
 
@@ -390,23 +388,22 @@ def build_complete_bc(read):
 
 def count_parallel_wrapper(ref_and_input_bam_fpath):
     ref, input_bam_fpath = ref_and_input_bam_fpath
-    read_count_given_umi_given_bc = defaultdict(Counter)
+    read_count_given_bc = Counter()
     for read in pysam.AlignmentFile(input_bam_fpath).fetch(ref):
-        read_count_given_umi_given_bc[build_complete_bc(read)][read.get_tag('UB')] += 1
-    return ref, read_count_given_umi_given_bc
+        if read.is_read1 or (read.is_read2 and read.mate_is_unmapped):
+            read_count_given_bc[build_complete_bc(read)] += 1
+    return ref, read_count_given_bc
 
 def gDNA_count_matrix(arguments, input_bam_fpath):
     """
-    Counts the reads from the input bam file and outputs sparse matrices of read and UMI counts.
+    Counts the reads from the input bam file and outputs a sparse matrix of read counts.
     """
     raw_reads_output_dir = os.path.join(arguments.output_dir, 'raw_reads_bc_matrix')
-    raw_umis_output_dir = os.path.join(arguments.output_dir, 'raw_umis_bc_matrix')
-    for out_dir in [raw_reads_output_dir, raw_umis_output_dir]:
-        if os.path.exists(out_dir):
-            log.info('Matrix output folder exists. Skipping count matrix build')
-            return 
-        else:
-            os.makedirs(out_dir)
+    if os.path.exists(raw_reads_output_dir):
+        log.info('Matrix output folder exists. Skipping count matrix build')
+        return 
+    else:
+        os.makedirs(raw_reads_output_dir)
 
     log.info('Finding all barcodes present...')
     complete_bcs = set(
@@ -424,28 +421,22 @@ def gDNA_count_matrix(arguments, input_bam_fpath):
     log.info('Counting reads...')
     # Build matrix in transpose because bam file is sorted by references (columns of matrix)
     M_reads_T = lil_matrix((len(reference_names), len(sorted_complete_bcs)), dtype=int)
-    M_umis_T = lil_matrix((len(reference_names), len(sorted_complete_bcs)), dtype=int)
     with Pool(arguments.threads) as pool:
-        for j, (ref, read_count_given_umi_given_bc) in enumerate(pool.imap_unordered(
+        for j, (ref, read_count_given_bc) in enumerate(pool.imap_unordered(
                 count_parallel_wrapper,
                 reference_names_with_input_bam)):
-            for comp_bc, umi_cntr in read_count_given_umi_given_bc.items():
+            for comp_bc, read_count in read_count_given_bc.items():
                 i = i_given_complete_bc[comp_bc]
-                for umi, count in umi_cntr.items():
-                    M_reads_T[j, i] += count
-                    M_umis_T[j, i] += 1
+                M_reads_T[j, i] += read_count
 
     log.info('Writing raw read count matrix...')
-    for out_dir, M_T in [(raw_reads_output_dir, M_reads_T), (raw_umis_output_dir, M_umis_T)]:
-        raw_matrix_fpath = os.path.join(out_dir, 'matrix.mtx.gz')
-        M = M_T.transpose()
-        with gzip.open(raw_matrix_fpath, 'wb') as out:
-            scipy.io.mmwrite(out, M)
-        raw_rows_fpath = os.path.join(out_dir, 'barcodes.tsv.gz')
-        raw_cols_fpath = os.path.join(out_dir, 'features.tsv.gz')
-        for fpath, obj in [
-                (raw_rows_fpath, sorted_complete_bcs), (raw_cols_fpath, reference_names)
-                ]:
-            with gzip.open(fpath, 'wt') as out:
-                out.write('\n'.join(obj))
+    raw_matrix_fpath = os.path.join(raw_reads_output_dir, 'matrix.mtx.gz')
+    M_reads = M_reads_T.transpose()
+    with gzip.open(raw_matrix_fpath, 'wb') as out:
+        scipy.io.mmwrite(out, M_reads)
+    raw_rows_fpath = os.path.join(raw_reads_output_dir, 'barcodes.tsv.gz')
+    raw_cols_fpath = os.path.join(raw_reads_output_dir, 'features.tsv.gz')
+    for fpath, obj in [(raw_rows_fpath, sorted_complete_bcs), (raw_cols_fpath, reference_names)]:
+        with gzip.open(fpath, 'wt') as out:
+            out.write('\n'.join(obj))
 
