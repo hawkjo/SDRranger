@@ -222,9 +222,7 @@ def serial_process_gDNA_fastqs(arguments, bc_fq_fpath, paired_fq_fpath, sans_bc_
 
     log.info(f'Processing first {n_first_seqs:,d} for score threshold...')
     first_scores_recs_tags = []
-    for i, (bc_rec, paired_red) in enumerate(zip(
-        SeqIO.parse(misc.gzip_friendly_open(bc_fq_fpath), 'fastq'),
-        SeqIO.parse(misc.gzip_friendly_open(paired_fq_fpath), 'fastq'))):
+    for i, bc_rec in enumerate(SeqIO.parse(misc.gzip_friendly_open(bc_fq_fpath), 'fastq')):
         first_scores_recs_tags.append(process_bc_rec(bc_rec, aligners, bcd))
         if i >= n_first_seqs:
             break
@@ -249,135 +247,134 @@ def serial_process_gDNA_fastqs(arguments, bc_fq_fpath, paired_fq_fpath, sans_bc_
                 SeqIO.write(sans_bc_rec, bc_fq_fh, 'fastq')
                 SeqIO.write(paired_rec, paired_fq_fh, 'fastq')
                 output_rec_name_and_tags(sans_bc_rec, tags, tag_fh)
-    log.info(f'{i+1:,d} records processed')
-    log.info(f'{total_out:,d} records output')
+    log.info(f'{i+1:,d} barcode records processed')
+    log.info(f'{total_out:,d} pairs of records output')
 
 
 def write_chunk(arguments, tmpdirname, template_bam_fpath, i, bc_chunk, p_chunk):
     """
     Writes chunks to files
     """
-    tmp_fq_fpath = os.path.join(tmpdirname, f'{i}.fq')
-    tmp_bam_fpath = os.path.join(tmpdirname, f'{i}.bam')
-    tmp_out_bam_fpath = os.path.join(tmpdirname, f'{i}.parsed.bam')
-    with open(tmp_fq_fpath, 'w') as fq_out:
+    tmp_bc_fq_fpath = os.path.join(tmpdirname, f'{i}_bc.fq')
+    tmp_paired_fq_fpath = os.path.join(tmpdirname, f'{i}_paired.fq')
+    tmp_out_bc_fq_fpath = os.path.join(tmpdirname, f'{i}_bc.processed.fq')
+    tmp_out_paired_fq_fpath = os.path.join(tmpdirname, f'{i}_paired.processed.fq')
+    tmp_out_tags_fpath = os.path.join(tmpdirname, f'{i}_tags.fq')
+    with open(tmp_bc_fq_fpath, 'w') as fq_out:
         SeqIO.write(bc_chunk, fq_out, 'fastq')
-    with pysam.AlignmentFile(tmp_bam_fpath, 'wb', template=pysam.AlignmentFile(template_bam_fpath)) as bam_out:
-        for p_read in p_chunk:
-            bam_out.write(p_read)
-    return tmp_fq_fpath, tmp_bam_fpath, tmp_out_bam_fpath, template_bam_fpath
+    with open(tmp_paired_fq_fpath, 'w') as fq_out:
+        SeqIO.write(p_chunk, fq_out, 'fastq')
+    return (tmp_bc_fq_fpath,
+            tmp_paired_fq_fpath,
+            tmp_out_bc_fq_fpath,
+            tmp_out_paired_fq_fpath,
+            tmp_out_tags_fpath,
+            template_bam_fpath)
 
 
-def chunked_gDNA_paired_recs_tmp_files_iterator(arguments, thresh, bc_fq_fpath, p_bam_fpath, tmpdirname, chunksize):
+def chunked_gDNA_paired_recs_tmp_files_iterator(arguments, thresh, bc_fq_fpath, paired_fq_fpath, tmpdirname, chunksize):
     """
     Breaks pairs into chunks and writes to files.
     """
     bc_chunk, p_chunk = [], []
-    for i, (bc_rec, p_read) in enumerate(gDNA_paired_recs_iterator(bc_fq_fpath, p_bam_fpath)):
+    for i, (bc_rec, paired_rec) in enumerate(zip(
+        SeqIO.parse(misc.gzip_friendly_open(bc_fq_fpath), 'fastq'),
+        SeqIO.parse(misc.gzip_friendly_open(paired_fq_fpath), 'fastq'))):
         bc_chunk.append(bc_rec)
-        p_chunk.append(p_read)
+        p_chunk.append(paired_rec)
         if i % chunksize == 0 and i > 0:
-            yield arguments, thresh, write_chunk(arguments, tmpdirname, p_bam_fpath, i, bc_chunk, p_chunk)
+            yield arguments, thresh, write_chunk(arguments, tmpdirname, paired_fq_fpath, i, bc_chunk, p_chunk)
             bc_chunk, p_chunk = [], []
     if i % chunksize:
-        yield arguments, thresh, write_chunk(arguments, tmpdirname, p_bam_fpath, i, bc_chunk, p_chunk)
+        yield arguments, thresh, write_chunk(arguments, tmpdirname, paired_fq_fpath, i, bc_chunk, p_chunk)
 
 
 def process_chunk_of_reads(args_and_fpaths):
     """
     Processing chunks of reads. Required to build aligners in each parallel process.
     """
-    arguments, thresh, (tmp_fq_fpath, tmp_bam_fpath, tmp_out_bam_fpath, template_bam_fpath) = args_and_fpaths
+    arguments, thresh, (tmp_bc_fq_fpath,
+            tmp_paired_fq_fpath,
+            tmp_out_bc_fq_fpath,
+            tmp_out_paired_fq_fpath,
+            tmp_out_tags_fpath,
+            template_bam_fpath) = args_and_fpaths
     aligners = misc.build_gDNA_bc_aligners()
     bcd = BCDecoder(arguments.barcode_whitelist, arguments.max_bc_err_decode)
-    sbcd = SBCDecoder(arguments.sample_barcode_whitelist, arguments.max_sbc_err_decode, arguments.sbc_reject_delta)
-    with pysam.AlignmentFile(tmp_out_bam_fpath, 'wb', template=pysam.AlignmentFile(template_bam_fpath)) as out:
-        for bc_rec, p_read in gDNA_paired_recs_iterator(tmp_fq_fpath, tmp_bam_fpath):
-            score, read = process_bc_rec(bc_rec, aligners, bcd)
-            if score >= thresh and read:
-                out.write(read)
-    os.remove(tmp_fq_fpath)
-    os.remove(tmp_bam_fpath)
-    return tmp_out_bam_fpath
+    with open(tmp_out_bc_fq_fpath, 'w') as bc_fq_fh, \
+            open(tmp_out_paired_fq_fpath, 'w') as paired_fq_fh, \
+            open(tmp_out_tags_fpath, 'w') as tag_fh:
+        for i, (bc_rec, paired_rec) in enumerate(zip(
+            SeqIO.parse(misc.gzip_friendly_open(tmp_bc_fq_fpath), 'fastq'),
+            SeqIO.parse(misc.gzip_friendly_open(tmp_paired_fq_fpath), 'fastq'))):
+            score, sans_bc_rec, tags = process_bc_rec(bc_rec, aligners, bcd)
+            if score >= thresh and sans_bc_rec:
+                SeqIO.write(sans_bc_rec, bc_fq_fh, 'fastq')
+                SeqIO.write(paired_rec, paired_fq_fh, 'fastq')
+                output_rec_name_and_tags(sans_bc_rec, tags, tag_fh)
+    os.remove(tmp_bc_fq_fpath)
+    os.remove(tmp_paired_fq_fpath)
+    return tmp_out_bc_fq_fpath, tmp_out_paired_fq_fpath, tmp_out_tags_fpath
 
-
-def parallel_process_gDNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_bc_fh):
+def parallel_process_gDNA_fastqs(arguments, bc_fq_fpath, paired_fq_fpath, sans_bc_fq_fpath, sans_bc_paired_fq_fpath, tags_fpath):
     """
     Parallel version of serial process.
-    
-    Rather more involved. pysam doesn't parallelize well. AlignedSegment's don't pickle. So one
-    must create a large number of temporary files and process things that way, with multiple levels
-    of helper functions
     """
     chunksize=100000
     aligners = misc.build_gDNA_bc_aligners()
     bcd = BCDecoder(arguments.barcode_whitelist, arguments.max_bc_err_decode)
-    sbcd = SBCDecoder(arguments.sample_barcode_whitelist, arguments.max_sbc_err_decode, arguments.sbc_reject_delta)
     with Pool(arguments.threads) as pool, \
             tempfile.TemporaryDirectory(prefix='/dev/shm/') as tmpdirname:
         log.info(f'Processing first {n_first_seqs:,d} for score threshold...')
-        first_scores_and_pieces = []
-        for i, (bc_rec, p_read) in enumerate(
-                gDNA_paired_recs_iterator(bc_fq_fpath, star_raw_fpath)
-                ):
-            first_scores_and_pieces.append(process_bc_rec(bc_rec, aligners, bcd))
+        first_scores_recs_tags = []
+        for i, bc_rec in enumerate(SeqIO.parse(misc.gzip_friendly_open(bc_fq_fpath), 'fastq')):
+            first_scores_recs_tags.append(process_bc_rec(bc_rec, aligners, bcd))
             if i >= n_first_seqs:
                 break
 
-        scores = [score for score, read in first_scores_and_pieces]
+        scores = [score for score, rec, tags in first_scores_recs_tags]
         thresh = np.average(scores) - 2 * np.std(scores)
         log.info(f'Score threshold: {thresh:.2f}')
 
         log.info(f'Using temporary directory {tmpdirname}')
         total_out = 0
 
-        # The following iteration architecture is designed to overcome a few limitaitons.
-        #
-        # First: pysam AlignedSegment objects are not picklable, so they cannot be sent to parallel
-        # processes directly. Hence, each chunk of reads must be written to an intermediate file
-        # and processed as a file. The only objects passed around are arguments and filenames 
-        #
-        # Second: pysam does not easily append to an existing bam file, so we pass a filehandle
-        # opened in the parent function that does not close until the full, combined bam file is
-        # produced.
-        #
-        # Third: We use the imap method of the Pool object from the multiprocessing library.
-        # The original intention was to hand it an iterator that generated the intermediate files
-        # as they were lazily loaded by the imap function. However, it turns out the imap function
-        # actually does construct all the objects of the iterator first, generating all files
-        # instead of just the currently needed ones. So we use a construction suggested on
-        # stackoverflow to created it first as an iterator, use itertools.islice to break off a
-        # chunk of arguments at a time (generating only those intermediate files), and then call
-        # imap separately for each chunk thus created. This works as desired, though obviously
-        # sacrifices a bit in performance as the chunks are hard-separated before parallelism.
-        # However, for this problem all pieces in each chunk take very similar amount of time to
-        # process, so the performance sacrifice is not too significant. 
+        # See RNAcount for explanation of architecture choice. Could possibly be restructured here
+        # in a more normal fashion due to not passing around pysam objects. That would speed things
+        # up moderately, but since the expected gain is low we keep the same architecture here.
         chunk_iter = chunked_gDNA_paired_recs_tmp_files_iterator(
                 arguments,
                 thresh,
                 bc_fq_fpath,
-                star_raw_fpath,
+                paired_fq_fpath,
                 tmpdirname,
                 chunksize=chunksize)
-        i = 0
-        while True:
-            chunk_of_args_and_fpaths = list(itertools.islice(chunk_iter, arguments.threads))
-            if not chunk_of_args_and_fpaths:
-                break
-            for j, tmp_out_bam_fpath in enumerate(pool.imap(
-                process_chunk_of_reads,
-                chunk_of_args_and_fpaths)):
-                it_idx = i*arguments.threads+j
-                log.info(f'  {it_idx*chunksize:,d}-{(it_idx+1)*chunksize:,d}')
-                for read in pysam.AlignmentFile(tmp_out_bam_fpath).fetch(until_eof=True):
-                    total_out += 1
-                    star_w_bc_fh.write(read)
-                os.remove(tmp_out_bam_fpath)
-            i += 1
+
+        with open(sans_bc_fq_fpath, 'w') as sans_bc_fh, \
+                open(sans_bc_paired_fq_fpath, 'w') as sans_bc_paired_fh, \
+                open(tags_fpath, 'w') as tags_fh:
+            i = 0
+            while True:
+                chunk_of_args_and_fpaths = list(itertools.islice(chunk_iter, arguments.threads))
+                if not chunk_of_args_and_fpaths:
+                    break
+                for j, (tmp_out_bc_fq_fpath, tmp_out_paired_fq_fpath, tmp_out_tags_fpath) in enumerate(pool.imap(
+                    process_chunk_of_reads,
+                    chunk_of_args_and_fpaths)):
+                    it_idx = i*arguments.threads+j
+                    log.info(f'  {it_idx*chunksize:,d}-{(it_idx+1)*chunksize:,d}')
+                    SeqIO.write(SeqIO.parse(tmp_out_bc_fq_fpath, 'fastq'), sans_bc_fh, 'fastq')
+                    SeqIO.write(SeqIO.parse(tmp_out_paired_fq_fpath, 'fastq'), sans_bc_paired_fh, 'fastq')
+                    for line in open(tmp_out_tags_fpath):
+                        tags_fh.write(line)
+                        total_out += 1
+                    for fpath in (tmp_out_bc_fq_fpath, tmp_out_paired_fq_fpath, tmp_out_tags_fpath):
+                        os.remove(fpath)
+                i += 1
     
-    nrecs = int(misc.file_prefix_from_fpath(tmp_out_bam_fpath).split('.')[0]) 
-    log.info(f'{nrecs:,d} records processed')
-    log.info(f'{total_out:,d} records output')
+    nrecs = int(misc.file_prefix_from_fpath(tmp_out_bc_fq_fpath).split('_')[0]) 
+    log.info(f'{nrecs:,d} barcode records processed')
+    log.info(f'{total_out:,d} pairs of records output')
 
 
 def build_complete_bc(read):
