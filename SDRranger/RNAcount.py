@@ -163,7 +163,7 @@ def process_bc_rec_and_p_read(bc_rec, p_read, aligners, bcd, sbcd):
     p_read.set_tag('CR', f'{raw_pieces[0]}.{raw_pieces[2]}')
     # Sample barcode
     p_read.set_tag('SB', sbc)
-    p_read.set_tag('SR', raw_pieces[4])
+    p_read.set_tag('SR', new_pieces[4])
     # Filler sequences
     tags.append(('FL', f'{len(commonseq1)+ len(commonseq2)}'))
     # And raw UMI
