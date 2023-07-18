@@ -194,7 +194,7 @@ def build_tags_iter(tags_fpath):
     for line in open(tags_fpath):
         words = line.strip().split('\t')
         read_name = words[0]
-        tags = [word.split(':') for word in words[1:]]
+        tags = [parse_tag_str(word) for word in words[1:]]
         yield read_name, tags
 
 
@@ -212,8 +212,26 @@ def gDNA_add_tags_to_reads(tags_fpath, bam_fpath):
         yield read
 
 
+def tag_type_from_val(val):
+    if isinstance(val, str):
+        return 'Z'
+    elif isinstance(val, int):
+        return 'i'
+    else:
+        # no other types implemented
+        raise ValueError('Unexpected tag type')
+
+
+def parse_tag_str(tag_str):
+    tag, tag_type, val = tag_str.split(':')
+    if tag_type == 'i':
+        # only worry about strings and ints
+        val = int(val)
+    return tag, val
+
+
 def output_rec_name_and_tags(rec, tags, out_fh):
-    out_fh.write('\t'.join([f'{str(rec.id)}'] + [f'{tag}:{val}' for tag, val in tags]) + '\n')
+    out_fh.write('\t'.join([f'{str(rec.id)}'] + [f'{tag}:{tag_type_from_val(val)}:{val}' for tag, val in tags]) + '\n')
 
 
 def serial_process_gDNA_fastqs(arguments, bc_fq_fpath, paired_fq_fpath, sans_bc_fq_fpath, sans_bc_paired_fq_fpath, tags_fpath):
