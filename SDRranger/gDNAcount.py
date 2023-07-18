@@ -113,6 +113,8 @@ def process_gDNA_fastqs(arguments):
             for star_out_fpath, tags_fpath in star_bam_and_tags_fpaths:
                 for read in gDNA_add_tags_to_reads(tags_fpath, star_out_fpath):
                     bam_out.write(read)
+        for fpath in (sans_bc_fq_fpath, sans_bc_paired_fq_fpath, tags_fpath):
+            os.remove(fpath)
         for star_out_dir in star_out_dirs:
             shutil.rmtree(star_out_dir)  # clean up intermediate STAR files
     
@@ -179,8 +181,7 @@ def process_bc_rec(bc_rec, aligners, bcd):
     tags.append(('CB', f'{bc1}.{bc2}'))
     tags.append(('CR', f'{raw_pieces[0]}.{raw_pieces[2]}'))
     # Filler sequences
-    tags.append(('FB', f'{commonseq1}.{commonseq2}'))
-    tags.append(('FR', f'{raw_pieces[1]}.{raw_pieces[3]}'))
+    tags.append(('FL', f'{len(commonseq1)+ len(commonseq2)}'))
 
     new_rec = bc_rec[raw_end_pos:]
     new_rec.id = bc_rec.id
@@ -379,8 +380,7 @@ def parallel_process_gDNA_fastqs(arguments, bc_fq_fpath, paired_fq_fpath, sans_b
 
 def build_complete_bc(read):
     bc = read.get_tag('CB')
-    filler = read.get_tag('FB')
-    filler_len = len(filler.split('.')[0])
+    filler_len = read.get_tag('FL')
     return f'{bc}:{filler_len:d}'
 
 def count_parallel_wrapper(ref_and_input_bam_fpath):

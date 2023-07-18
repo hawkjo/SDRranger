@@ -165,8 +165,7 @@ def process_bc_rec_and_p_read(bc_rec, p_read, aligners, bcd, sbcd):
     p_read.set_tag('SB', sbc)
     p_read.set_tag('SR', raw_pieces[4])
     # Filler sequences
-    p_read.set_tag('FB', f'{commonseq1}.{commonseq2}')
-    p_read.set_tag('FR', f'{raw_pieces[1]}.{raw_pieces[3]}')
+    tags.append(('FL', f'{len(commonseq1)+ len(commonseq2)}'))
     # And raw UMI
     p_read.set_tag('UR', new_pieces[-1])
     return raw_score, p_read
@@ -371,8 +370,7 @@ def correct_UMIs(arguments, input_bam_fpath, out_bam_fpath):
 
 def build_complete_bc(read):
     bc = read.get_tag('CB')
-    filler = read.get_tag('FB')
-    filler_len = len(filler.split('.')[0])
+    filler_len = read.get_tag('FL')
     sbc = read.get_tag('SB')
     return f'{bc}:{filler_len:d}:{sbc}'
 
