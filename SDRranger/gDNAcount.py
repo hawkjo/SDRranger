@@ -434,19 +434,17 @@ def gDNA_count_matrix(arguments, input_bam_fpath):
     j_given_reference = {ref: j for j, ref in enumerate(reference_names)}
 
     log.info('Counting reads...')
-    # Build matrix in transpose because bam file is sorted by references (columns of matrix)
-    M_reads_T = lil_matrix((len(reference_names), len(sorted_complete_bcs)), dtype=int)
+    M_reads = lil_matrix((len(reference_names), len(sorted_complete_bcs)), dtype=int)
     with Pool(arguments.threads) as pool:
         for j, (ref, read_count_given_bc) in enumerate(pool.imap_unordered(
                 count_parallel_wrapper,
                 reference_names_with_input_bam)):
             for comp_bc, read_count in read_count_given_bc.items():
                 i = i_given_complete_bc[comp_bc]
-                M_reads_T[j, i] += read_count
+                M_reads[j, i] += read_count
 
     log.info('Writing raw read count matrix...')
     raw_matrix_fpath = os.path.join(raw_reads_output_dir, 'matrix.mtx.gz')
-    M_reads = M_reads_T.transpose()
     with gzip.open(raw_matrix_fpath, 'wb') as out:
         scipy.io.mmwrite(out, M_reads)
     raw_rows_fpath = os.path.join(raw_reads_output_dir, 'barcodes.tsv.gz')
