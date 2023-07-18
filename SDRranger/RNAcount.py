@@ -372,7 +372,7 @@ def build_complete_bc(read):
     bc = read.get_tag('CB')
     filler_len = read.get_tag('FL')
     sbc = read.get_tag('SB')
-    return f'{bc}:{filler_len:d}:{sbc}'
+    return f'{bc}:{filler_len}:{sbc}'
 
 def count_parallel_wrapper(ref_and_input_bam_fpath):
     ref, input_bam_fpath = ref_and_input_bam_fpath
