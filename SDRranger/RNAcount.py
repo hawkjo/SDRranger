@@ -411,9 +411,10 @@ def RNA_count_matrix(arguments, input_bam_fpath):
     M_reads = lil_matrix((len(reference_names), len(sorted_complete_bcs)), dtype=int)
     M_umis = lil_matrix((len(reference_names), len(sorted_complete_bcs)), dtype=int)
     with Pool(arguments.threads) as pool:
-        for j, (ref, read_count_given_umi_given_bc) in enumerate(pool.imap_unordered(
+        for ref, read_count_given_umi_given_bc in pool.imap_unordered(
                 count_parallel_wrapper,
-                reference_names_with_input_bam)):
+                reference_names_with_input_bam):
+            j = j_given_reference[ref]
             for comp_bc, umi_cntr in read_count_given_umi_given_bc.items():
                 i = i_given_complete_bc[comp_bc]
                 for umi, count in umi_cntr.items():
