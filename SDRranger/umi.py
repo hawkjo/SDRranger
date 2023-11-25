@@ -1,6 +1,8 @@
 import editdistance
 import pysam
 import numpy as np
+import freebarcodes
+from freebarcodes.editmeasures import free_divergence
 from Bio import SeqIO
 from typing import Tuple, Dict
 from collections import Counter, defaultdict
@@ -11,10 +13,18 @@ from scipy.sparse.csgraph import connected_components
 def simple_hamming_distance(s1, s2):
     return sum(1 for c1, c2 in zip(s1, s2) if c1 != c2)
 
+def free_divergence_w_diff_lens(s1, s2):
+    try:
+        return free_divergence(s1, s2)
+    except AssertionError:
+        if len(s2) < len(s1):
+            s1, s2 = s2, s1
+        return free_divergence(s1 + 'N'*(len(s2) - len(s1)), s2)
+
 def get_connected_components(
         umis: list, 
         max_dist: int = 1,
-        dist_type: str = 'hamming'
+        dist_type: str = 'freediv'
         ) -> Tuple[int, np.array]:
     """
     Builds adjacency matrix of umis given max_dist and calls connected_componenets
@@ -27,8 +37,10 @@ def get_connected_components(
         dist_func = simple_hamming_distance
     elif dist_type == 'edit':
         dist_func = editdistance.distance
+    elif dist_type == 'freediv':
+        dist_func = free_divergence_w_diff_lens
     else:
-        raise ValueError('dist type must be either hamming or edit')
+        raise ValueError('dist type must be either hamming, edit, or freediv')
 
     adj_mat = lil_matrix((len(umis), len(umis)), dtype=np.uint8)
     for i, umi_i in enumerate(umis):
@@ -39,7 +51,7 @@ def get_connected_components(
                 adj_mat[j, i] = 1
     return connected_components(adj_mat)
 
-def get_umi_map_from_cntr(umi_cntr: Counter, max_dist: int = 1, dist_type: str = 'hamming') -> dict:
+def get_umi_map_from_cntr(umi_cntr: Counter, max_dist: int = 1, dist_type: str = 'freediv') -> dict:
     """
     Builds a dict from observed umis to connected component umi with max count.
     """
@@ -58,7 +70,7 @@ def get_umi_maps_from_bam_file(
         start: int = None,
         end: int = None,
         max_dist: int = 1,
-        dist_type: str = 'hamming'
+        dist_type: str = 'freediv'
         ) -> Dict[str, Counter]:
     """
     Builds umi_map_given_bc for reads from (specified region of) a given file.
@@ -83,7 +95,7 @@ def get_directional_connected_components(
         umis: list, 
         umi_cntr: Counter,
         max_dist: int = 1,
-        dist_type: str = 'hamming'
+        dist_type: str = 'freediv'
         ) -> Tuple[int, np.array]:
     """
     Builds adjacency matrix of umis given max_dist and calls connected_componenets
@@ -96,8 +108,10 @@ def get_directional_connected_components(
         dist_func = simple_hamming_distance
     elif dist_type == 'edit':
         dist_func = editdistance.distance
+    elif dist_type == 'freediv':
+        dist_func = free_divergence_w_diff_lens
     else:
-        raise ValueError('dist type must be either hamming or edit')
+        raise ValueError('dist type must be either hamming, edit, or freediv')
 
 
     # Build direction-based adjacency matrix: i->j if cnt_i >= 2*cnt_j - 1 as in umitools
@@ -128,7 +142,7 @@ def get_directional_connected_components(
 
     return connected_components(adj_mat)
 
-def get_directional_umi_map_from_cntr(umi_cntr: Counter, max_dist: int = 1, dist_type: str = 'hamming') -> dict:
+def get_directional_umi_map_from_cntr(umi_cntr: Counter, max_dist: int = 1, dist_type: str = 'freediv') -> dict:
     umi_list = list(umi_cntr.keys())
     n_vals, component_array = get_directional_connected_components(umi_list, umi_cntr, max_dist=max_dist, dist_type=dist_type)
     component_max_umi = [None for _ in range(n_vals)]
@@ -144,7 +158,7 @@ def get_directional_umi_maps_from_bam_file(
         start: int = None,
         end: int = None,
         max_dist: int = 1,
-        dist_type: str = 'hamming'
+        dist_type: str = 'freediv'
         ) -> Dict[str, Counter]:
     """
     Builds umi_map_given_bc for reads from (specified region of) a given file.
