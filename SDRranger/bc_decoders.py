@@ -7,12 +7,14 @@ log = logging.getLogger(__name__)
 
 class BCDecoder:
     def __init__(self, bc_whitelist_fpath, bc_maxdist):
-        self.bcs = [line.strip() for line in open(bc_whitelist_fpath)]
+        self.bcs = set([line.strip() for line in open(bc_whitelist_fpath)])
         self.bc_maxdist = bc_maxdist
         self.bc_len = len(self.bcs[0])
         assert all(len(bc) == self.bc_len for bc in self.bcs)
 
     def decode(self, raw_bc):
+        if raw_bc in self.bcs:
+            return raw_bc
         dists_and_scores = [(editdistance.eval(raw_bc, bc), bc) for bc in self.bcs]
         min_dist, bc = min(dists_and_scores)
         if min_dist > self.bc_maxdist:
