@@ -397,9 +397,7 @@ def parallel_process_gDNA_fastqs(arguments, bc_fq_fpath, paired_fq_fpath, sans_b
 
 
 def build_complete_bc(read):
-    bc = read.get_tag('CB')
-    filler_len = read.get_tag('FL')
-    return f'{bc}:{filler_len:d}'
+    return read.get_tag('CB')
 
 def count_parallel_wrapper(ref_and_input_bam_fpath):
     ref, input_bam_fpath = ref_and_input_bam_fpath
