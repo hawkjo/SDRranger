@@ -1,4 +1,4 @@
-import editdistance
+import Levenshtein
 import freebarcodes
 import freebarcodes.decode
 import logging
@@ -16,7 +16,7 @@ class BCDecoder:
     def decode(self, raw_bc):
         if raw_bc in self.bcs_set:
             return raw_bc
-        dists_and_scores = [(editdistance.eval(raw_bc, bc), bc) for bc in self.bcs]
+        dists_and_scores = [(Levenshtein.distance(raw_bc, bc), bc) for bc in self.bcs]
         min_dist, bc = min(dists_and_scores)
         if min_dist > self.bc_maxdist:
             return None
