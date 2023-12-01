@@ -16,7 +16,6 @@ from scipy.sparse import lil_matrix
 from .bc_aligner import CustomBCAligner
 from .bc_decoders import BCDecoder, SBCDecoder
 from .constants import commonseq1_options, commonseq2_gDNA 
-from .umi import get_umi_maps_from_bam_file
 
 
 log = logging.getLogger(__name__)
