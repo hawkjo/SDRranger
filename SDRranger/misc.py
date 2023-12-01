@@ -2,6 +2,7 @@ import os
 import gzip
 import glob
 import logging
+import scipy
 import numpy as np
 from Bio import SeqIO
 from .bc_aligner import CustomBCAligner
@@ -69,13 +70,16 @@ def determine_bc_and_paired_fastq_idxs(paired_fpaths, RNA_or_gDNA):
     avg_score1 = average_align_score_of_first_recs(fpath1, RNA_or_gDNA)
     return (0, 1) if avg_score0 > avg_score1 else (1, 0)
 
+
 def build_gDNA_bc_aligners():
     """Helper function, kept as function for parallelism"""
     return [CustomBCAligner('N'*9, cso, 'N'*9, commonseq2_gDNA) for cso in commonseq1_options]
 
+
 def build_RNA_bc_aligners():
     """Helper function, kept as function for parallelism"""
     return [CustomBCAligner('N'*9, cso, 'N'*9, commonseq2_RNA, 'N'*8, 'N'*8) for cso in commonseq1_options]
+
 
 def average_align_score_of_first_recs(fastq_fpath, RNA_or_gDNA, n_seqs=500):
     """Return average alignment score of first n_seqs records"""
@@ -94,3 +98,16 @@ def average_align_score_of_first_recs(fastq_fpath, RNA_or_gDNA, n_seqs=500):
             break
     return np.average(first_scores)
 
+
+def write_matrix(M, bcs, features, out_dir):
+    matrix_fpath = os.path.join(out_dir, 'matrix.mtx.gz')
+    with gzip.open(matrix_fpath, 'wb') as out:
+        scipy.io.mmwrite(out, M)
+
+    rows_fpath = os.path.join(out_dir, 'barcodes.tsv.gz')
+    with gzip.open(rows_fpath, 'wt') as out:
+        out.write('\n'.join(bcs))
+
+    cols_fpath = os.path.join(out_dir, 'features.tsv.gz')
+    with gzip.open(cols_fpath, 'wt') as out:
+        out.write('\n'.join([f'{ft}\t{ft}\tGene Expression' for ft in features]))

@@ -422,14 +422,4 @@ def RNA_count_matrix(arguments, input_bam_fpath):
 
     log.info('Writing raw read count matrix...')
     for out_dir, M in [(raw_reads_output_dir, M_reads), (raw_umis_output_dir, M_umis)]:
-        raw_matrix_fpath = os.path.join(out_dir, 'matrix.mtx.gz')
-        with gzip.open(raw_matrix_fpath, 'wb') as out:
-            scipy.io.mmwrite(out, M)
-        raw_rows_fpath = os.path.join(out_dir, 'barcodes.tsv.gz')
-        raw_cols_fpath = os.path.join(out_dir, 'features.tsv.gz')
-        for fpath, obj in [
-                (raw_rows_fpath, sorted_complete_bcs), (raw_cols_fpath, reference_names)
-                ]:
-            with gzip.open(fpath, 'wt') as out:
-                out.write('\n'.join(obj))
-
+        misc.write_matrix(M, sorted_complete_bcs, reference_names, out_dir)
