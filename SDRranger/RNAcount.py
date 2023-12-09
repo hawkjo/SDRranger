@@ -125,6 +125,7 @@ def run_STAR_RNA(arguments, fastq_fpath):
         f'--outFileNamePrefix {out_prefix}',
         '--outFilterMultimapNmax 1', 
         '--outSAMtype BAM Unsorted', 
+        '--outSAMattributes NH HI AS nM GX GN',
     ]
     if fastq_fpath.endswith('gz'):
         cmd_star.append('--readFilesCommand zcat')

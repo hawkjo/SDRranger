@@ -145,6 +145,7 @@ def run_STAR_gDNA(arguments, R1_fpath, R2_fpath):
         f'--outFileNamePrefix {out_prefix}',
         '--outFilterMultimapNmax 1', 
         '--outSAMtype BAM Unsorted', 
+        '--outSAMattributes NH HI AS nM GX GN',
     ]
     if R1_fpath.endswith('.gz'):
         if not R2_fpath.endswith('.gz'):
