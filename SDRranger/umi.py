@@ -63,7 +63,7 @@ def get_umi_maps_from_bam_file(
     for read in pysam.AlignmentFile(bam_fpath).fetch(chrm, start, end):
         bc = read.get_tag('CB')
         umi = read.get_tag('UR')
-        for gx_gn_tup in misc.gn_gx_tups_from_read(read):
+        for gx_gn_tup in misc.gx_gn_tups_from_read(read):
             umi_cntr_given_bc_then_feature[bc][gx_gn_tup][umi] += 1
     umi_cntr_given_bc_then_feature = dict(umi_cntr_given_bc_then_feature)
 
