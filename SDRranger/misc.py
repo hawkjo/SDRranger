@@ -2,6 +2,7 @@ import os
 import gzip
 import glob
 import logging
+import pysam
 import scipy
 import numpy as np
 from Bio import SeqIO
