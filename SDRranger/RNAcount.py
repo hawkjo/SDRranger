@@ -376,10 +376,11 @@ def build_complete_bc(read):
 
 def count_parallel_wrapper(ref_and_input_bam_fpath):
     ref, input_bam_fpath = ref_and_input_bam_fpath
-    read_count_given_umi_given_bc = defaultdict(Counter)
+    read_count_given_bc_then_feature_then_umi = defaultdict(lambda : defaultdict(Counter))
     for read in pysam.AlignmentFile(input_bam_fpath).fetch(ref):
-        read_count_given_umi_given_bc[build_complete_bc(read)][read.get_tag('UB')] += 1
-    return ref, read_count_given_umi_given_bc
+        for gx_gn_tup in misc.gn_gx_tups_from_read(read): # count read toward all compatible genes
+            read_count_given_bc_then_feature_then_umi[build_complete_bc(read)][gx_gn_tup][read.get_tag('UB')] += 1
+    return ref, read_count_given_bc_then_feature_then_umi
 
 def RNA_count_matrix(arguments, input_bam_fpath):
     """
@@ -395,32 +396,35 @@ def RNA_count_matrix(arguments, input_bam_fpath):
             os.makedirs(out_dir)
 
     log.info('Finding all barcodes present...')
-    complete_bcs = set(
-        build_complete_bc(read)
-        for read in pysam.AlignmentFile(input_bam_fpath, threads=arguments.threads-1).fetch()
-        )
-    sorted_complete_bcs = sorted(complete_bcs)
-    i_given_complete_bc = {comp_bc: i for i, comp_bc in enumerate(sorted_complete_bcs)}
+    sorted_complete_bcs, sorted_features = misc.get_bcs_and_features(
+            input_bam_fpath,
+            build_complete_bc,
+            arguments.threads-1
+            )
+    i_given_feature = {feat: i for i, feat in enumerate(sorted_features)}
+    j_given_complete_bc = {comp_bc: j for j, comp_bc in enumerate(sorted_complete_bcs)}
+
 
     with pysam.AlignmentFile(input_bam_fpath) as bamfile:
         reference_names = bamfile.references
     reference_names_with_input_bam = [(ref, input_bam_fpath) for ref in reference_names]
-    j_given_reference = {ref: j for j, ref in enumerate(reference_names)}
+
 
     log.info('Counting reads...')
-    M_reads = lil_matrix((len(reference_names), len(sorted_complete_bcs)), dtype=int)
-    M_umis = lil_matrix((len(reference_names), len(sorted_complete_bcs)), dtype=int)
+    M_reads = lil_matrix((len(sorted_features), len(sorted_complete_bcs)), dtype=int)
+    M_umis = lil_matrix((len(sorted_features), len(sorted_complete_bcs)), dtype=int)
     with Pool(arguments.threads) as pool:
-        for ref, read_count_given_umi_given_bc in pool.imap_unordered(
+        for ref, read_count_given_bc_then_feature_then_umi in pool.imap_unordered(
                 count_parallel_wrapper,
                 reference_names_with_input_bam):
-            j = j_given_reference[ref]
-            for comp_bc, umi_cntr in read_count_given_umi_given_bc.items():
-                i = i_given_complete_bc[comp_bc]
-                for umi, count in umi_cntr.items():
-                    M_reads[j, i] += count
-                    M_umis[j, i] += 1
+            for comp_bc, read_count_given_feature_then_umi in read_count_given_bc_then_feature_then_umi.items():
+                j = j_given_complete_bc[comp_bc]
+                for gx_gn_tup, umi_cntr in read_count_given_feature_then_umi.items():
+                    i = i_given_feature[gx_gn_tup]
+                    for umi, count in umi_cntr.items():
+                        M_reads[i, j] += count
+                        M_umis[i, j] += 1
 
     log.info('Writing raw read count matrix...')
     for out_dir, M in [(raw_reads_output_dir, M_reads), (raw_umis_output_dir, M_umis)]:
-        misc.write_matrix(M, sorted_complete_bcs, reference_names, out_dir)
+        misc.write_matrix(M, sorted_complete_bcs, sorted_features, out_dir)

@@ -99,6 +99,22 @@ def average_align_score_of_first_recs(fastq_fpath, RNA_or_gDNA, n_seqs=500):
     return np.average(first_scores)
 
 
+def gn_gx_tups_from_read(read):
+    gxs = read.get_tag('GX').split(';')
+    gns = read.get_tag('GN').split(';')
+    return list(zip(gxs, gns))
+
+
+def get_bcs_and_features_from_bam(input_bam_fpath, build_complete_bc, threads=1):
+    complete_bcs, features = set(), set()
+    for read in pysam.AlignmentFile(input_bam_fpath, threads=threads).fetch()
+        complete_bcs.add(build_complete_bc(read))
+        features.update(gn_gx_tups_from_read(read))
+    sorted_complete_bcs = sorted(complete_bcs)
+    sorted_features = sorted(features)
+    return sorted_complete_bcs, sorted_features
+
+
 def write_matrix(M, bcs, features, out_dir):
     matrix_fpath = os.path.join(out_dir, 'matrix.mtx.gz')
     with gzip.open(matrix_fpath, 'wb') as out:
@@ -110,4 +126,4 @@ def write_matrix(M, bcs, features, out_dir):
 
     cols_fpath = os.path.join(out_dir, 'features.tsv.gz')
     with gzip.open(cols_fpath, 'wt') as out:
-        out.write('\n'.join([f'{ft}\t{ft}\tGene Expression' for ft in features]))
+        out.write('\n'.join([f'{gx}\t{gn}\tGene Expression' for gx, gn in features]))
