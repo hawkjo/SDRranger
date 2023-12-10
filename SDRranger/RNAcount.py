@@ -398,7 +398,7 @@ def RNA_count_matrix(arguments, input_bam_fpath):
             os.makedirs(out_dir)
 
     log.info('Finding all barcodes present...')
-    sorted_complete_bcs, sorted_features = misc.get_bcs_and_features(
+    sorted_complete_bcs, sorted_features = misc.get_bcs_and_features_from_bam(
             input_bam_fpath,
             build_complete_bc,
             arguments.threads-1
