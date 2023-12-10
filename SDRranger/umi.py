@@ -2,6 +2,7 @@ import editdistance
 import pysam
 import numpy as np
 import freebarcodes
+from . import misc
 from freebarcodes.editmeasures import free_divergence
 from Bio import SeqIO
 from typing import Tuple, Dict
@@ -53,23 +54,25 @@ def get_umi_maps_from_bam_file(
         connection_type: str = 'directional'
         ) -> Dict[str, Counter]:
     """
-    Builds umi_map_given_bc for reads from (specified region of) a given file.
+    Builds umi_map_given_bc_then_feature for reads from (specified region of) a given file.
 
     returns
-        :dict: umi_map_given_bc
+        :dict: umi_map_given_bc_then_feature
     """
-    umi_cntr_given_bc = defaultdict(Counter)
+    umi_cntr_given_bc_then_feature = defaultdict(lambda: defaultdict(Counter))
     for read in pysam.AlignmentFile(bam_fpath).fetch(chrm, start, end):
         bc = read.get_tag('CB')
         umi = read.get_tag('UR')
-        umi_cntr_given_bc[bc][umi] += 1
-    umi_cntr_given_bc = dict(umi_cntr_given_bc)
+        for gx_gn_tup in misc.gn_gx_tups_from_read(read):
+            umi_cntr_given_bc_then_feature[bc][gx_gn_tup][umi] += 1
+    umi_cntr_given_bc_then_feature = dict(umi_cntr_given_bc_then_feature)
 
-    umi_map_given_bc = {}
-    for bc, umi_cntr in umi_cntr_given_bc.items():
-        umi_map_given_bc[bc] = get_umi_map_from_cntr(umi_cntr, max_dist=max_dist, dist_type=dist_type, connection_type=connection_type)
+    umi_map_given_bc_then_feature = defaultdict(dict)
+    for bc, umi_cntr_given_feature in umi_cntr_given_bc_then_feature.items():
+        for feature, umi_cntr in umi_cntr_given_feature.items():
+            umi_map_given_bc_then_feature[bc][feature] = get_umi_map_from_cntr(umi_cntr, max_dist=max_dist, dist_type=dist_type, connection_type=connection_type)
 
-    return umi_map_given_bc
+    return umi_map_given_bc_then_feature
 
 def get_connected_components(
         umis: list, 
