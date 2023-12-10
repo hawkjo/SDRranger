@@ -382,6 +382,9 @@ def count_parallel_wrapper(ref_and_input_bam_fpath):
     for read in pysam.AlignmentFile(input_bam_fpath).fetch(ref):
         for gx_gn_tup in misc.gx_gn_tups_from_read(read): # count read toward all compatible genes
             read_count_given_bc_then_feature_then_umi[build_complete_bc(read)][gx_gn_tup][read.get_tag('UB')] += 1
+    for k in read_count_given_bc_then_feature_then_umi.keys():
+        read_count_given_bc_then_feature_then_umi[k] = dict(read_count_given_bc_then_feature_then_umi[k])
+    read_count_given_bc_then_feature_then_umi = dict(read_count_given_bc_then_feature_then_umi)
     return ref, read_count_given_bc_then_feature_then_umi
 
 def RNA_count_matrix(arguments, input_bam_fpath):

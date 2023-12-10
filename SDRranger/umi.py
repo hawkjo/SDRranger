@@ -65,13 +65,13 @@ def get_umi_maps_from_bam_file(
         umi = read.get_tag('UR')
         for gx_gn_tup in misc.gx_gn_tups_from_read(read):
             umi_cntr_given_bc_then_feature[bc][gx_gn_tup][umi] += 1
-    umi_cntr_given_bc_then_feature = dict(umi_cntr_given_bc_then_feature)
 
     umi_map_given_bc_then_feature = defaultdict(dict)
     for bc, umi_cntr_given_feature in umi_cntr_given_bc_then_feature.items():
         for feature, umi_cntr in umi_cntr_given_feature.items():
             umi_map_given_bc_then_feature[bc][feature] = get_umi_map_from_cntr(umi_cntr, max_dist=max_dist, dist_type=dist_type, connection_type=connection_type)
 
+    umi_map_given_bc_then_feature = dict(umi_map_given_bc_then_feature)
     return umi_map_given_bc_then_feature
 
 def get_connected_components(

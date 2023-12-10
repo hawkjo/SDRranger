@@ -406,6 +406,7 @@ def count_parallel_wrapper(ref_and_input_bam_fpath):
         if read.is_read1 or (read.is_read2 and read.mate_is_unmapped):
             for gx_gn_tup in misc.gx_gn_tups_from_read(read): # count read toward all compatible genes
                 read_count_given_bc_then_feature[build_complete_bc(read)][gx_gn_tup] += 1
+    read_count_given_bc_then_feature = dict(read_count_given_bc_then_feature)
     return ref, read_count_given_bc_then_feature
 
 def gDNA_count_matrix(arguments, input_bam_fpath):
