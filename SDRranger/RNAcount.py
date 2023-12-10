@@ -359,12 +359,13 @@ def correct_UMIs(arguments, input_bam_fpath, out_bam_fpath):
 
     with pysam.AlignmentFile(out_bam_fpath, 'wb', template=pysam.AlignmentFile(input_bam_fpath)) as bam_out, \
             Pool(arguments.threads) as pool:
-        for i, (ref, umi_map_given_bc) in enumerate(pool.imap_unordered(
+        for i, (ref, umi_map_given_bc_then_feature) in enumerate(pool.imap_unordered(
                 umi_parallel_wrapper,
                 reference_names_with_input_bam)):
             log.info(f'  {ref}')
             for read in pysam.AlignmentFile(input_bam_fpath).fetch(ref):
-                corrected_umi = umi_map_given_bc[read.get_tag('CB')][read.get_tag('UR')]
+                gx_gn_tup = misc.gn_gx_tups_from_read(read)[0] # use the first one. Ideally same across all
+                corrected_umi = umi_map_given_bc_then_feature[read.get_tag('CB')][gx_gn_tup][read.get_tag('UR')]
                 read.set_tag('UB', corrected_umi)
                 bam_out.write(read)
 
