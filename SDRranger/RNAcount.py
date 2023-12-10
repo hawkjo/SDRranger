@@ -364,7 +364,7 @@ def correct_UMIs(arguments, input_bam_fpath, out_bam_fpath):
                 reference_names_with_input_bam)):
             log.info(f'  {ref}')
             for read in pysam.AlignmentFile(input_bam_fpath).fetch(ref):
-                gx_gn_tup = misc.gn_gx_tups_from_read(read)[0] # use the first one. Ideally same across all
+                gx_gn_tup = misc.gx_gn_tups_from_read(read)[0] # use the first one. Ideally same across all
                 corrected_umi = umi_map_given_bc_then_feature[read.get_tag('CB')][gx_gn_tup][read.get_tag('UR')]
                 read.set_tag('UB', corrected_umi)
                 bam_out.write(read)
@@ -379,7 +379,7 @@ def count_parallel_wrapper(ref_and_input_bam_fpath):
     ref, input_bam_fpath = ref_and_input_bam_fpath
     read_count_given_bc_then_feature_then_umi = defaultdict(lambda : defaultdict(Counter))
     for read in pysam.AlignmentFile(input_bam_fpath).fetch(ref):
-        for gx_gn_tup in misc.gn_gx_tups_from_read(read): # count read toward all compatible genes
+        for gx_gn_tup in misc.gx_gn_tups_from_read(read): # count read toward all compatible genes
             read_count_given_bc_then_feature_then_umi[build_complete_bc(read)][gx_gn_tup][read.get_tag('UB')] += 1
     return ref, read_count_given_bc_then_feature_then_umi
 

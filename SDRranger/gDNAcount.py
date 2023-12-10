@@ -404,7 +404,7 @@ def count_parallel_wrapper(ref_and_input_bam_fpath):
     read_count_given_bc_then_feature = defaultdict(Counter)
     for read in pysam.AlignmentFile(input_bam_fpath).fetch(ref):
         if read.is_read1 or (read.is_read2 and read.mate_is_unmapped):
-            for gx_gn_tup in misc.gn_gx_tups_from_read(read): # count read toward all compatible genes
+            for gx_gn_tup in misc.gx_gn_tups_from_read(read): # count read toward all compatible genes
                 read_count_given_bc_then_feature[build_complete_bc(read)][gx_gn_tup] += 1
     return ref, read_count_given_bc_then_feature
 

@@ -99,7 +99,7 @@ def average_align_score_of_first_recs(fastq_fpath, RNA_or_gDNA, n_seqs=500):
     return np.average(first_scores)
 
 
-def gn_gx_tups_from_read(read):
+def gx_gn_tups_from_read(read):
     gxs = read.get_tag('GX').split(';')
     gns = read.get_tag('GN').split(';')
     return list(zip(gxs, gns))
@@ -107,9 +107,9 @@ def gn_gx_tups_from_read(read):
 
 def get_bcs_and_features_from_bam(input_bam_fpath, build_complete_bc, threads=1):
     complete_bcs, features = set(), set()
-    for read in pysam.AlignmentFile(input_bam_fpath, threads=threads).fetch()
+    for read in pysam.AlignmentFile(input_bam_fpath, threads=threads).fetch():
         complete_bcs.add(build_complete_bc(read))
-        features.update(gn_gx_tups_from_read(read))
+        features.update(gx_gn_tups_from_read(read))
     sorted_complete_bcs = sorted(complete_bcs)
     sorted_features = sorted(features)
     return sorted_complete_bcs, sorted_features
