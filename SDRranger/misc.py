@@ -100,9 +100,12 @@ def average_align_score_of_first_recs(fastq_fpath, RNA_or_gDNA, n_seqs=500):
 
 
 def gx_gn_tups_from_read(read):
-    gxs = read.get_tag('GX').split(';')
-    gns = read.get_tag('GN').split(';')
-    return list(zip(gxs, gns))
+    try:
+        gxs = read.get_tag('GX').split(';')
+        gns = read.get_tag('GN').split(';')
+        return list(zip(gxs, gns))
+    except:
+        return []
 
 
 def get_bcs_and_features_from_bam(input_bam_fpath, build_complete_bc, threads=1):
