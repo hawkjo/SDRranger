@@ -15,7 +15,7 @@ from multiprocessing import Pool
 from scipy.sparse import lil_matrix
 from .bc_aligner import CustomBCAligner
 from .bc_decoders import BCDecoder, SBCDecoder
-from .umi import get_directional_umi_maps_from_bam_file
+from .umi import get_umi_maps_from_bam_file
 
 
 log = logging.getLogger(__name__)
@@ -350,7 +350,7 @@ def parallel_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_b
 
 def umi_parallel_wrapper(ref_and_input_bam_fpath):
     ref, input_bam_fpath = ref_and_input_bam_fpath
-    return ref, get_directional_umi_maps_from_bam_file(input_bam_fpath, chrm=ref)
+    return ref, get_umi_maps_from_bam_file(input_bam_fpath, chrm=ref)
 
 def correct_UMIs(arguments, input_bam_fpath, out_bam_fpath):
     with pysam.AlignmentFile(input_bam_fpath) as bamfile:
