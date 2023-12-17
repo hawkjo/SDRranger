@@ -18,13 +18,17 @@ class CommandLineArguments(object):
     @property
     def command(self):
         # We have to do this weird loop to deal with the way docopt stores the command name
-        for possible_command in ('count_gDNA', 'count_RNA'):
+        for possible_command in ('count_gDNA', 'count_RNA', 'count_matrix'):
             if self._arguments.get(possible_command):
                 return possible_command
 
     @property
     def fastq_dir(self):
         return self._arguments['<fastq_dir>']
+
+    @property
+    def SDR_bam_file(self):
+        return self._arguments['<SDR_bam_file>']
 
     @property
     def log_level(self):

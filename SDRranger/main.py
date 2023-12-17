@@ -4,14 +4,16 @@ SDRranger: Processing Genomic-Transcriptomic TAP-Seq data.
 Usage:
   SDRranger count_RNA        <fastq_dir> [--STAR-ref-dir=<>] [--barcode-whitelist=<>] [--max-bc-err-decode=<>] [--sample-barcode-whitelist=<>] [--max-sbc-err-decode=<>] [--sbc-reject-delta=<>] [--output-dir=<>] [--threads=<>] [-v | -vv | -vvv]
   SDRranger count_gDNA       <fastq_dir> [--STAR-ref-dir=<>] [--barcode-whitelist=<>] [--max-bc-err-decode=<>] [--output-dir=<>] [--threads=<>] [-v | -vv | -vvv]
+  SDRranger count_matrix       <SDR_bam_file> [--output-dir=<>] [--threads=<>] [-v | -vv | -vvv]
 
 Options:
   -h --help     Show this screen.
   --version     Show version.
 
 Commands:
-  gDNA          Process and count Genomic gDNA files
-  RNA           Process and count Transcriptomic RNA files
+  count_gDNA    Process and count Genomic gDNA files
+  count_RNA     Process and count Transcriptomic RNA files
+  count_matrix  Build a count matrix (or matrices) from an existing bam file
 """
 import logging
 import os
@@ -20,7 +22,7 @@ from .__init__ import __version__
 from .config import CommandLineArguments
 from .RNAcount import process_RNA_fastqs
 from .gDNAcount import process_gDNA_fastqs 
-
+from .count_matrix import build_count_matrices_from_bam
 
 def main(**kwargs):
     docopt_args = docopt(__doc__, version=__version__)
@@ -37,6 +39,7 @@ def main(**kwargs):
     commands = {
         'count_RNA': process_RNA_fastqs,
         'count_gDNA': process_gDNA_fastqs,
+        'count_matrix': build_count_matrices_from_bam,
     }
 
     commands[arguments.command](arguments)
