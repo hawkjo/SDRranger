@@ -139,19 +139,20 @@ def run_STAR_gDNA(arguments, R1_fpath, R2_fpath):
     out_prefix = os.path.join(star_out_dir, f'{R1_bname}_')
     cmd_star = [
         'STAR',
-        f'--runThreadN 1', # required to keep order matching with fastq file
+        f'--runThreadN {arguments.threads}',
         f'--genomeDir {arguments.star_ref_dir}',
         f'--readFilesIn {R1_fpath} {R2_fpath}',
         f'--outFileNamePrefix {out_prefix}',
         '--outFilterMultimapNmax 1', 
-        '--outSAMtype BAM Unsorted', 
-        '--outSAMattributes NH HI AS nM GX GN',
+        '--outSAMtype SAM',
+        '--outSAMorder PairedKeepInputOrder',
+        '--outSAMattributes NH HI AS nM',
     ]
     if R1_fpath.endswith('.gz'):
         if not R2_fpath.endswith('.gz'):
             raise ValueError('Paired read files must be both zipped or both unzipped')
         cmd_star.append('--readFilesCommand zcat')
-    star_out_fpath = f'{out_prefix}Aligned.out.bam'
+    star_out_fpath = f'{out_prefix}Aligned.out.sam'
     if os.path.exists(star_out_fpath):
         log.info("STAR results found. Skipping alignment")
     else:
