@@ -1,7 +1,7 @@
-import Levenshtein
-import freebarcodes
 import freebarcodes.decode
 import logging
+
+from .misc import DistanceThresh
 
 log = logging.getLogger(__name__)
 
@@ -11,16 +11,17 @@ class BCDecoder:
         self.bcs_set = set(self.bcs)
         self.bc_maxdist = bc_maxdist
         self.bc_len = len(self.bcs[0])
+        self._distfun = DistanceThresh("levenshtein", bc_maxdist)
         assert all(len(bc) == self.bc_len for bc in self.bcs)
 
     def decode(self, raw_bc):
         if raw_bc in self.bcs_set:
             return raw_bc
-        dists_and_scores = [(Levenshtein.distance(raw_bc, bc, score_cutoff=self.bc_maxdist), bc) for bc in self.bcs]
-        min_dist, bc = min(dists_and_scores)
-        if min_dist > self.bc_maxdist:
+        dists_and_scores = [(dist, bc) for bc in self.bcs if (dist := self._distfun(raw_bc, bc)) is not False]
+        if not len(dists_and_scores):
             return None
-        if sum(1 for dist, bc in dists_and_scores if dist == min_dist) > 1:
+        min_dist, bc = min(dists_and_scores)
+        if sum(dist == min_dist for dist, _ in dists_and_scores) > 1:
             return None
         return bc
 
