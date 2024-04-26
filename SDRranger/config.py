@@ -1,14 +1,22 @@
 import logging
 import os
+import json
+
+from .misc import gzip_friendly_open
 
 
 class CommandLineArguments(object):
     """
     Wraps the raw arguments provided by docopt.
     """
-    def __init__(self, arguments, current_directory):
+    def __init__(self, arguments):
         self._arguments = arguments
-        self._current_directory = current_directory
+
+        try:
+            with gzip_friendly_open(arguments["--config"]) as f:
+                self._config = json.load(f)
+        except KeyError:
+            self._config = None
 
     def _comma_delimited_arg(self, key):
         if self._arguments[key]:
@@ -44,29 +52,13 @@ class CommandLineArguments(object):
         return self._arguments['--STAR-ref-dir'] 
 
     @property
-    def max_bc_err_decode(self):
-        return int(self._arguments['--max-bc-err-decode'] or 1)
-
-    @property
-    def max_sbc_err_decode(self):
-        return int(self._arguments['--max-sbc-err-decode'] or 1)
-
-    @property
-    def sbc_reject_delta(self):
-        return int(self._arguments['--sbc-reject-delta'] or 0)
-
-    @property
-    def barcode_whitelist(self):
-        return os.path.expanduser(self._arguments['--barcode-whitelist']) if self._arguments['--barcode-whitelist'] else None
-
-    @property
-    def sample_barcode_whitelist(self):
-        return os.path.expanduser(self._arguments['--sample-barcode-whitelist']) if self._arguments['--sample-barcode-whitelist'] else None
+    def config(self):
+        return self._config
 
     @property
     def threads(self):
-        return int(self._arguments['--threads'] or 1)
+        return int(self._arguments['--threads'])
 
     @property
     def output_dir(self):
-        return self._arguments['--output-dir'] or '.'
+        return self._arguments['--output-dir']

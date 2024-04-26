@@ -2,11 +2,16 @@
 SDRranger: Processing Genomic-Transcriptomic TAP-Seq data.
 
 Usage:
-  SDRranger count_RNA        <fastq_dir> [--STAR-ref-dir=<>] [--barcode-whitelist=<>] [--max-bc-err-decode=<>] [--sample-barcode-whitelist=<>] [--max-sbc-err-decode=<>] [--sbc-reject-delta=<>] [--output-dir=<>] [--threads=<>] [-v | -vv | -vvv]
-  SDRranger count_gDNA       <fastq_dir> [--STAR-ref-dir=<>] [--barcode-whitelist=<>] [--max-bc-err-decode=<>] [--output-dir=<>] [--threads=<>] [-v | -vv | -vvv]
-  SDRranger count_matrix       <SDR_bam_file> [--output-dir=<>] [--threads=<>] [-v | -vv | -vvv]
+  SDRranger count_RNA        <fastq_dir> --STAR-ref-dir=<> --config=<> [--output-dir=<>] [--threads=<>] [-v | -vv | -vvv]
+  SDRranger count_gDNA       <fastq_dir> --STAR-ref-dir=<>  --config=<> [--output-dir=<>] [--threads=<>] [-v | -vv | -vvv]
+  SDRranger count_matrix       <SDR_bam_file> --output-dir=<> [--threads=<>] [-v | -vv | -vvv]
 
 Options:
+  --STAR-ref-dir=<>: Path to directory with STAR index.
+  --config=<>: Path to JSON configuration.
+  --output-dir=<>: Path to output directory [default: .].
+  --threads=<>: Number of threads [default: 1].
+  -v: Verbose output.
   -h --help     Show this screen.
   --version     Show version.
 
@@ -26,7 +31,7 @@ from .count_matrix import build_count_matrices_from_bam
 
 def main(**kwargs):
     docopt_args = docopt(__doc__, version=__version__)
-    arguments = CommandLineArguments(docopt_args, os.getcwd())
+    arguments = CommandLineArguments(docopt_args)
 
     log = logging.getLogger()
     handler = logging.StreamHandler()
