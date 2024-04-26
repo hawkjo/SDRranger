@@ -85,12 +85,7 @@ def build_bc_aligners(config):
             naligners.append(block["sequence"])
             barcodelengths.append(None)
         elif block["blocktype"] == "barcodeList":
-            bclen = list(set(len(bc) for bc in block["sequence"]))
-            if len(bclen) > 1:
-                naligners.append(bclen)
-                barcodelengths.append(None)
-            else:
-                barcodelengths.append(bclen[0])
+            barcodelengths.append(len(block["sequence"][0]))
         else:
             barcodelengths.append(block["length"])
 
@@ -102,7 +97,7 @@ def build_bc_aligners(config):
             if ln is not None:
                 prefixes.append("N" * ln)
             else:
-                prefixes.append("N" * aln[alnidx] if isinstance(aln[alnidx], int) else aln[alnidx])
+                prefixes.append(aln[alnidx])
                 alnidx += 1
         aligners.append(CustomBCAligner(*prefixes))
     return aligners
