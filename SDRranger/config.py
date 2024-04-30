@@ -49,7 +49,11 @@ class CommandLineArguments(object):
 
     @property
     def star_ref_dir(self):
-        return self._arguments['--STAR-ref-dir'] 
+        return self._arguments['--STAR-ref-dir']
+
+    @property
+    def star_output_path(self):
+        return self._arguments['--STAR-output']
 
     @property
     def config(self):

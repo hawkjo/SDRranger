@@ -61,14 +61,20 @@ def process_RNA_fastqs(arguments):
     if completed < 1:
         bc_fq_idx, paired_fq_idx = misc.determine_bc_and_paired_fastq_idxs(paired_fpaths, arguments.config)
         log.info(f'Detected barcodes in read{bc_fq_idx+1} files')
-        log.info(f'Running STAR alignment...')
+
         paired_fq_bam_fpaths = []
-        for tup_fastq_fpaths in paired_fpaths:
-            bc_fq_fpath = tup_fastq_fpaths[bc_fq_idx]
-            paired_fq_fpath = tup_fastq_fpaths[paired_fq_idx]
-            log.info(f'  {paired_fq_fpath}')
-            star_out_dir, star_out_fpath = run_STAR_RNA(arguments, paired_fq_fpath)
-            paired_fq_bam_fpaths.append((bc_fq_fpath, star_out_fpath))
+        if not arguments.star_output_path:
+            log.info(f'Running STAR alignment...')
+            for tup_fastq_fpaths in paired_fpaths:
+                bc_fq_fpath = tup_fastq_fpaths[bc_fq_idx]
+                paired_fq_fpath = tup_fastq_fpaths[paired_fq_idx]
+                log.info(f'  {paired_fq_fpath}')
+                star_out_dir, star_out_fpath = run_STAR_RNA(arguments, paired_fq_fpath)
+                paired_fq_bam_fpaths.append((bc_fq_fpath, star_out_fpath))
+        else:
+            log.info(f'Using STAR results from {arguments.star_output_path}')
+            for fpaths, bampath in zip(paired_fpaths, arguments.star_output_path, strict=True):
+                paired_fq_bam_fpaths.append((fpaths[bc_fq_idx], bampath))
     
         log.info('Writing output to:')
         log.info(f'  {star_w_bc_fpath}')
