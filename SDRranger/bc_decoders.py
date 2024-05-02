@@ -6,8 +6,8 @@ from .misc import DistanceThresh
 log = logging.getLogger(__name__)
 
 class BCDecoder:
-    def __init__(self, bc_whitelist_fpath, bc_maxdist):
-        self.bcs = [line.strip() for line in open(bc_whitelist_fpath)]
+    def __init__(self, bc_whitelist, bc_maxdist):
+        self.bcs = bc_whitelist
         self.bcs_set = set(self.bcs)
         self.bc_maxdist = bc_maxdist
         self.bc_len = len(self.bcs[0])
@@ -27,8 +27,8 @@ class BCDecoder:
 
 
 class SBCDecoder:
-    def __init__(self, sbc_whitelist_fpath, sbc_maxdist, sbc_reject_delta):
-        self.sbcs = [line.strip() for line in open(sbc_whitelist_fpath)]
+    def __init__(self, sbc_whitelist, sbc_maxdist, sbc_reject_delta):
+        self.sbcs = sbc_whitelist
         self.sbc_len = len(self.sbcs[0])
         assert all(len(sbc) == self.sbc_len for sbc in self.sbcs)
         self.sbc_maxdist = sbc_maxdist

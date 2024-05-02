@@ -3,12 +3,15 @@ import gzip
 import glob
 import logging
 import pysam
+import json
+from itertools import product
+
 import scipy
 import numpy as np
 from Bio import SeqIO
 from pywfa import WavefrontAligner
 from .bc_aligner import CustomBCAligner
-from .constants import commonseq1_options, commonseq2_RNA, commonseq2_gDNA
+from .bc_decoders import BCDecoder, SBCDecoder
 
 
 log = logging.getLogger(__name__)
@@ -41,7 +44,9 @@ class DistanceThresh:
                 return score + self._freediv * lendiff
 
 def gzip_friendly_open(fpath):
-    return gzip.open(fpath, 'rt') if fpath.endswith('gz') else open(fpath)
+    with open(fpath, "rb") as f:
+        header = f.read(2)
+    return gzip.open(fpath, 'rt') if header == b"\x1f\x8b" else open(fpath)
 
 
 def load_bc_list(fpath):
@@ -91,35 +96,62 @@ def file_prefix_from_fpath(fpath):
     return os.path.basename(bname)
 
 
-def determine_bc_and_paired_fastq_idxs(paired_fpaths, RNA_or_gDNA):
+def determine_bc_and_paired_fastq_idxs(paired_fpaths, config):
     """Returns (bc_fq_idx, paired_fq_idx), based on first pair of fastqs"""
     fpath0, fpath1 = paired_fpaths[0]
-    avg_score0 = average_align_score_of_first_recs(fpath0, RNA_or_gDNA)
-    avg_score1 = average_align_score_of_first_recs(fpath1, RNA_or_gDNA)
+    avg_score0 = average_align_score_of_first_recs(fpath0, config)
+    avg_score1 = average_align_score_of_first_recs(fpath1, config)
     return (0, 1) if avg_score0 > avg_score1 else (1, 0)
 
+def build_bc_aligners(config):
+    naligners = []
+    barcodelengths = []
+    for i, block in enumerate(config["barcode_struct_r1"]["blocks"]):
+        if block["blocktype"] == "constantRegion":
+            naligners.append(block["sequence"])
+            barcodelengths.append(None)
+        elif block["blocktype"] == "barcodeList":
+            barcodelengths.append(len(block["sequence"][0]))
+        else:
+            barcodelengths.append(block["length"])
 
-def build_gDNA_bc_aligners():
-    """Helper function, kept as function for parallelism"""
-    return [CustomBCAligner('N'*9, cso, 'N'*9, commonseq2_gDNA) for cso in commonseq1_options]
+    aligners = []
+    for aln in product(*naligners):
+        alnidx = 0
+        prefixes = []
+        for ln in barcodelengths:
+            if ln is not None:
+                prefixes.append("N" * ln)
+            else:
+                prefixes.append(aln[alnidx])
+                alnidx += 1
+        aligners.append(CustomBCAligner(*prefixes, unknown_read_orientation=config["unknown_read_orientation"]))
+    return aligners
 
+def build_bc_decoders(config):
+    decoders = []
+    lastblock = None
+    lastblockidx = -1
+    blocks = config["barcode_struct_r1"]["blocks"]
+    for i, block in enumerate(blocks):
+        if block["blocktype"] == "barcodeList":
+            if lastblock is not None:
+                decoders.append(BCDecoder(lastblock["sequence"], lastblock["maxerrors"]))
+            lastblock = block
+            lastblockidx = i
+    if lastblock is not None:
+        if lastblockidx == len(blocks) - 1 or blocks[lastblockidx + 1]["blocktype"] == "randomBarcode":
+            decoders.append(SBCDecoder(lastblock["sequence"], lastblock["maxerrors"], 0)) # TODO: expose max_reject_delta?
+        else:
+            decoders.append(BCDecoder(lastblock["sequence"], lastblock["maxerrors"]))
+    return decoders
 
-def build_RNA_bc_aligners():
-    """Helper function, kept as function for parallelism"""
-    return [CustomBCAligner('N'*9, cso, 'N'*9, commonseq2_RNA, 'N'*8, 'N'*8) for cso in commonseq1_options]
-
-
-def average_align_score_of_first_recs(fastq_fpath, RNA_or_gDNA, n_seqs=500):
+def average_align_score_of_first_recs(fastq_fpath, config, n_seqs=500):
     """Return average alignment score of first n_seqs records"""
-    if RNA_or_gDNA == 'RNA':
-        aligners = build_RNA_bc_aligners()
-    elif RNA_or_gDNA == 'gDNA':
-        aligners = build_gDNA_bc_aligners()
-    else:
-        raise ValueError('Invalid input for RNA_or_gDNA')
+    aligners = build_bc_aligners(config)
     first_scores = []
     for i, rec in enumerate(SeqIO.parse(gzip_friendly_open(fastq_fpath), 'fastq')):
-        scores_and_pieces = [al.find_norm_score_and_pieces(str(rec.seq)) for al in aligners]
+        scores_and_pieces = [al.find_norm_score_and_pieces(rec.seq) for al in aligners]
         raw_score, raw_pieces = max(scores_and_pieces)
         first_scores.append(raw_score)
         if i >= n_seqs:
@@ -136,10 +168,10 @@ def gx_gn_tups_from_read(read):
         return []
 
 
-def get_bcs_and_features_from_bam(input_bam_fpath, build_complete_bc, threads=1):
+def get_bcs_and_features_from_bam(input_bam_fpath, threads=1):
     complete_bcs, features = set(), set()
     for read in pysam.AlignmentFile(input_bam_fpath, threads=threads).fetch():
-        complete_bcs.add(build_complete_bc(read))
+        complete_bcs.add(read.get_tag('CB'))
         features.update(gx_gn_tups_from_read(read))
     sorted_complete_bcs = sorted(complete_bcs)
     sorted_features = sorted(features)

@@ -13,9 +13,7 @@ from Bio import SeqIO
 from collections import defaultdict, Counter
 from multiprocessing import Pool
 from scipy.sparse import lil_matrix
-from .bc_aligner import CustomBCAligner
 from .bc_decoders import BCDecoder, SBCDecoder
-from .constants import commonseq1_options, commonseq2_gDNA 
 
 
 log = logging.getLogger(__name__)
@@ -56,7 +54,7 @@ def process_gDNA_fastqs(arguments):
     # Add barcodes etc to bam file
     # Sort, index
     if completed < 1:
-        bc_fq_idx, paired_fq_idx = misc.determine_bc_and_paired_fastq_idxs(paired_fpaths, 'gDNA') 
+        bc_fq_idx, paired_fq_idx = misc.determine_bc_and_paired_fastq_idxs(paired_fpaths, arguments.config)
         log.info(f'Detected barcodes in read{bc_fq_idx+1} files')
         log.info('Writing output to:')
         log.info(f'  {star_w_bc_fpath}')
@@ -143,8 +141,8 @@ def run_STAR_gDNA(arguments, R1_fpath, R2_fpath):
         f'--genomeDir {arguments.star_ref_dir}',
         f'--readFilesIn {R1_fpath} {R2_fpath}',
         f'--outFileNamePrefix {out_prefix}',
-        '--outFilterMultimapNmax 1', 
-        '--outSAMtype BAM Unsorted', 
+        '--outFilterMultimapNmax 1',
+        '--outSAMtype BAM Unsorted',
         '--outSAMattributes NH HI AS nM GX GN',
     ]
     if R1_fpath.endswith('.gz'):
@@ -159,29 +157,45 @@ def run_STAR_gDNA(arguments, R1_fpath, R2_fpath):
     return star_out_dir, star_out_fpath
 
 
-def process_bc_rec(bc_rec, aligners, bcd):
+def process_bc_rec(config, bc_rec, aligners, decoders):
     """
     Find barcodes etc in bc_rec 
     """
+    blocks = config["barcode_struct_r1"]["blocks"]
     bc_seq = str(bc_rec.seq)
     scores_pieces_end_pos = [al.find_norm_score_pieces_and_end_pos(bc_seq) for al in aligners]
     raw_score, raw_pieces, raw_end_pos = max(scores_pieces_end_pos)
-    raw_bc1, raw_bc2 = [raw_pieces[i].upper().replace('N', 'A') for i in [0, 2]]
+    raw_bcs = [raw_piece.upper().replace('N', 'A') for raw_piece, block in zip(raw_pieces, blocks) if block["blocktype"] == "barcodeList"]
+    bcs = [decoder.decode(raw_bc) for raw_bc, decoder in zip(raw_bcs, decoders)]
 
-    bc1 = bcd.decode(raw_bc1)
-    bc2 = bcd.decode(raw_bc2)
     best_aligner = next(al for al, (s, p, e) in zip(aligners, scores_pieces_end_pos) if s == raw_score)
-    commonseq1, commonseq2 = [best_aligner.prefixes[i] for i in [1, 3]]
-    corrected_pieces = [bc1, commonseq1, bc2, commonseq2]
-    if None in corrected_pieces:
-        return raw_score, None, None
+    commonseqs = [best_aligner.prefixes[i] for i, block in enumerate(blocks) if block["blocktype"] == "constantRegion"]
+
+    bc_idx = commonseq_idx = 0
+    bam_bcs = []
+    bam_raw_bcs = []
+    bam_commonseqs = []
+    for i, block in enumerate(blocks):
+        if block["blocktype"] == "barcodeList":
+            if bcs[bc_idx] is None:
+                return raw_score, None
+            if block["blockfunction" != "discard"]:
+                bam_bcs.append(bcs[bc_idx])
+                bam_raw_bcs.append(raw_pieces[i])
+            bc_idx += 1
+        elif block["blocktype"] == "constantRegion":
+            if commonseqs[commonseq_idx] is None:
+                return raw_score, None
+            if block["blockfunction" != "discard"]:
+                bam_commonseqs.append(commonseqs[commonseq_idx])
+            commonseq_idx += 1
 
     tags = []
     # Cell barcode
-    tags.append(('CB', f'{bc1}.{bc2}'))
-    tags.append(('CR', f'{raw_pieces[0]}.{raw_pieces[2]}'))
+    tags.append(('CB', '.'.join(bam_bcs)))
+    tags.append(('CR', '.'.join(bam_raw_bcs)))
     # Filler sequences
-    tags.append(('FL', len(commonseq1) + len(commonseq2)))
+    tags.append(('FL', sum(len(seq) for seq in bam_commonseqs)))
 
     new_rec = bc_rec[raw_end_pos:]
     new_rec.id = bc_rec.id
@@ -236,13 +250,13 @@ def output_rec_name_and_tags(rec, tags, out_fh):
 
 def serial_process_gDNA_fastqs(arguments, bc_fq_fpath, paired_fq_fpath, sans_bc_fq_fpath, sans_bc_paired_fq_fpath, tags_fpath):
     log.info('Building aligners and barcode decoders')
-    aligners = misc.build_gDNA_bc_aligners()
-    bcd = BCDecoder(arguments.barcode_whitelist, arguments.max_bc_err_decode)
+    aligners = misc.build_bc_aligners(arguments.config)
+    decoders = misc.build_bc_decoders(arguments.config)
 
     log.info(f'Processing first {n_first_seqs:,d} for score threshold...')
     first_scores_recs_tags = []
     for i, bc_rec in enumerate(SeqIO.parse(misc.gzip_friendly_open(bc_fq_fpath), 'fastq')):
-        first_scores_recs_tags.append(process_bc_rec(bc_rec, aligners, bcd))
+        first_scores_recs_tags.append(process_bc_rec(arguments.config, bc_rec, aligners, decoders))
         if i >= n_first_seqs:
             break
 
@@ -260,7 +274,7 @@ def serial_process_gDNA_fastqs(arguments, bc_fq_fpath, paired_fq_fpath, sans_bc_
             SeqIO.parse(misc.gzip_friendly_open(paired_fq_fpath), 'fastq'))):
             if i % 100000 == 0 and i > 0:
                 log.info(f'  {i:,d}')
-            score, sans_bc_rec, tags = process_bc_rec(bc_rec, aligners, bcd)
+            score, sans_bc_rec, tags = process_bc_rec(arguments.config, bc_rec, aligners, decoders)
             if score >= thresh and sans_bc_rec:
                 total_out += 1
                 SeqIO.write(sans_bc_rec, bc_fq_fh, 'fastq')
@@ -318,7 +332,8 @@ def process_chunk_of_reads(args_and_fpaths):
             tmp_out_paired_fq_fpath,
             tmp_out_tags_fpath,
             template_bam_fpath) = args_and_fpaths
-    aligners = misc.build_gDNA_bc_aligners()
+    aligners = misc.build_bc_aligners(arguments.config)
+    decoders = misc.build_bc_decoders(arguments.config)
     bcd = BCDecoder(arguments.barcode_whitelist, arguments.max_bc_err_decode)
     with open(tmp_out_bc_fq_fpath, 'w') as bc_fq_fh, \
             open(tmp_out_paired_fq_fpath, 'w') as paired_fq_fh, \
@@ -326,7 +341,7 @@ def process_chunk_of_reads(args_and_fpaths):
         for i, (bc_rec, paired_rec) in enumerate(zip(
             SeqIO.parse(misc.gzip_friendly_open(tmp_bc_fq_fpath), 'fastq'),
             SeqIO.parse(misc.gzip_friendly_open(tmp_paired_fq_fpath), 'fastq'))):
-            score, sans_bc_rec, tags = process_bc_rec(bc_rec, aligners, bcd)
+            score, sans_bc_rec, tags = process_bc_rec(aligners, bc_rec, aligners, decoders)
             if score >= thresh and sans_bc_rec:
                 SeqIO.write(sans_bc_rec, bc_fq_fh, 'fastq')
                 SeqIO.write(paired_rec, paired_fq_fh, 'fastq')
@@ -340,14 +355,15 @@ def parallel_process_gDNA_fastqs(arguments, bc_fq_fpath, paired_fq_fpath, sans_b
     Parallel version of serial process.
     """
     chunksize=100000
-    aligners = misc.build_gDNA_bc_aligners()
+    aligners = misc.build_bc_aligners(arguments.config)
+    decoders = misc.build_bc_decoders(arguments.config)
     bcd = BCDecoder(arguments.barcode_whitelist, arguments.max_bc_err_decode)
     with Pool(arguments.threads) as pool, \
             tempfile.TemporaryDirectory(prefix='/dev/shm/') as tmpdirname:
         log.info(f'Processing first {n_first_seqs:,d} for score threshold...')
         first_scores_recs_tags = []
         for i, bc_rec in enumerate(SeqIO.parse(misc.gzip_friendly_open(bc_fq_fpath), 'fastq')):
-            first_scores_recs_tags.append(process_bc_rec(bc_rec, aligners, bcd))
+            first_scores_recs_tags.append(process_bc_rec(aligners, bc_rec, aligners, decoders))
             if i >= n_first_seqs:
                 break
 
@@ -396,16 +412,13 @@ def parallel_process_gDNA_fastqs(arguments, bc_fq_fpath, paired_fq_fpath, sans_b
     log.info(f'{total_out:,d} pairs of records output')
 
 
-def build_complete_bc(read):
-    return read.get_tag('CB')
-
 def count_parallel_wrapper(ref_and_input_bam_fpath):
     ref, input_bam_fpath = ref_and_input_bam_fpath
     read_count_given_bc_then_feature = defaultdict(Counter)
     for read in pysam.AlignmentFile(input_bam_fpath).fetch(ref):
         if read.is_read1 or (read.is_read2 and read.mate_is_unmapped):
             for gx_gn_tup in misc.gx_gn_tups_from_read(read): # count read toward all compatible genes
-                read_count_given_bc_then_feature[build_complete_bc(read)][gx_gn_tup] += 1
+                read_count_given_bc_then_feature[read.get_tag('CB')][gx_gn_tup] += 1
     read_count_given_bc_then_feature = dict(read_count_given_bc_then_feature)
     return ref, read_count_given_bc_then_feature
 
@@ -423,7 +436,6 @@ def gDNA_count_matrix(arguments, input_bam_fpath):
     log.info('Finding all barcodes present...')
     sorted_complete_bcs, sorted_features = misc.get_bcs_and_features_from_bam(
             input_bam_fpath,
-            build_complete_bc,
             arguments.threads-1
             )
     i_given_feature = {feat: i for i, feat in enumerate(sorted_features)}

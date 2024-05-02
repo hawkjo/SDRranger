@@ -14,7 +14,6 @@ from collections import defaultdict, Counter
 from multiprocessing import Pool
 from scipy.sparse import lil_matrix
 from .bc_aligner import CustomBCAligner
-from .bc_decoders import BCDecoder, SBCDecoder
 from .umi import get_umi_maps_from_bam_file
 
 
@@ -60,16 +59,22 @@ def process_RNA_fastqs(arguments):
             log.info('  -')
 
     if completed < 1:
-        bc_fq_idx, paired_fq_idx = misc.determine_bc_and_paired_fastq_idxs(paired_fpaths, 'RNA') 
+        bc_fq_idx, paired_fq_idx = misc.determine_bc_and_paired_fastq_idxs(paired_fpaths, arguments.config)
         log.info(f'Detected barcodes in read{bc_fq_idx+1} files')
-        log.info(f'Running STAR alignment...')
+
         paired_fq_bam_fpaths = []
-        for tup_fastq_fpaths in paired_fpaths:
-            bc_fq_fpath = tup_fastq_fpaths[bc_fq_idx]
-            paired_fq_fpath = tup_fastq_fpaths[paired_fq_idx]
-            log.info(f'  {paired_fq_fpath}')
-            star_out_dir, star_out_fpath = run_STAR_RNA(arguments, paired_fq_fpath)
-            paired_fq_bam_fpaths.append((bc_fq_fpath, star_out_fpath))
+        if not arguments.star_output_path:
+            log.info(f'Running STAR alignment...')
+            for tup_fastq_fpaths in paired_fpaths:
+                bc_fq_fpath = tup_fastq_fpaths[bc_fq_idx]
+                paired_fq_fpath = tup_fastq_fpaths[paired_fq_idx]
+                log.info(f'  {paired_fq_fpath}')
+                star_out_dir, star_out_fpath = run_STAR_RNA(arguments, paired_fq_fpath)
+                paired_fq_bam_fpaths.append((bc_fq_fpath, star_out_fpath))
+        else:
+            log.info(f'Using STAR results from {arguments.star_output_path}')
+            for fpaths, bampath in zip(paired_fpaths, arguments.star_output_path, strict=True):
+                paired_fq_bam_fpaths.append((fpaths[bc_fq_idx], bampath))
     
         log.info('Writing output to:')
         log.info(f'  {star_w_bc_fpath}')
@@ -123,8 +128,8 @@ def run_STAR_RNA(arguments, fastq_fpath):
         f'--genomeDir {arguments.star_ref_dir}',
         f'--readFilesIn {fastq_fpath}',
         f'--outFileNamePrefix {out_prefix}',
-        '--outFilterMultimapNmax 1', 
-        '--outSAMtype BAM Unsorted', 
+        '--outFilterMultimapNmax 1',
+        '--outSAMtype BAM Unsorted',
         '--outSAMattributes NH HI AS nM GX GN',
     ]
     if fastq_fpath.endswith('gz'):
@@ -137,38 +142,68 @@ def run_STAR_RNA(arguments, fastq_fpath):
     return star_out_dir, star_out_fpath
 
 
-def process_bc_rec_and_p_read(bc_rec, p_read, aligners, bcd, sbcd):
+def process_bc_rec_and_p_read(config, bc_rec, p_read, aligners, decoders):
     """
     Find barcodes etc in bc_rec and add them as tags to p_read
     """
-    bc_seq = str(bc_rec.seq)
-    scores_and_pieces = [al.find_norm_score_and_pieces(bc_seq) for al in aligners]
-    raw_score, raw_pieces = max(scores_and_pieces)
-    raw_bc1, raw_bc2, raw_sbc = [raw_pieces[i].upper().replace('N', 'A') for i in [0, 2, 4]]
+    blocks = config["barcode_struct_r1"]["blocks"]
+    scores_and_pieces = [al.find_norm_score_and_pieces(bc_rec.seq, return_seq=True) for al in aligners]
+    raw_score, raw_pieces, raw_seq = max(scores_and_pieces)
+    raw_bcs = [raw_piece.upper().replace('N', 'A') for raw_piece, block in zip(raw_pieces, blocks) if block["blocktype"] == "barcodeList"]
+    bcs = [decoder.decode(raw_bc) for raw_bc, decoder in zip(raw_bcs, decoders)]
 
-    bc1 = bcd.decode(raw_bc1)
-    bc2 = bcd.decode(raw_bc2)
-    sbc = sbcd.decode(raw_sbc)
-    best_aligner = next(al for al, (s, p) in zip(aligners, scores_and_pieces) if s == raw_score)
-    commonseq1, commonseq2 = [best_aligner.prefixes[i] for i in [1, 3]]
-    corrected_pieces = [bc1, commonseq1, bc2, commonseq2, sbc]
-    if None in corrected_pieces:
-        return raw_score, None
+    best_aligner = next(al for al, (s, p, sq) in zip(aligners, scores_and_pieces) if s == raw_score)
+    commonseqs = [best_aligner.prefixes[i] for i, block in enumerate(blocks) if block["blocktype"] == "constantRegion"]
 
-    new_aligner = CustomBCAligner(*corrected_pieces, 'N'*8)
-    new_score, new_pieces = new_aligner.find_norm_score_and_pieces(bc_seq)
+    bc_idx = commonseq_idx = 0
+    corrected_pieces = []
+    for block in blocks:
+        if block["blocktype"] == "barcodeList":
+            if bcs[bc_idx] is None:
+                return raw_score, None
+            corrected_pieces.append(bcs[bc_idx])
+            bc_idx += 1
+        elif block["blocktype"] == "constantRegion":
+            if commonseqs[commonseq_idx] is None:
+                return raw_score, None
+            corrected_pieces.append(commonseqs[commonseq_idx])
+            commonseq_idx += 1
+        else:
+            corrected_pieces.append('N' * block["length"])
+
+    new_aligner = CustomBCAligner(*corrected_pieces)
+    new_score, new_pieces = new_aligner.find_norm_score_and_pieces(raw_seq)
+
+    bam_bcs = []
+    bam_raw_bcs = []
+    bam_umis = []
+    bam_commonseqs = []
+
+    bc_idx = commonseq_idx = 0
+    for i, block in enumerate(blocks):
+        if block["blockfunction"] != "discard":
+            if block["blocktype"] == "barcodeList":
+                bam_bcs.append(bcs[bc_idx])
+                bam_raw_bcs.append(raw_pieces[i])
+                bc_idx += 1
+            elif block["blocktype"] == "constantRegion":
+                bam_commonseqs.append(commonseqs[commonseq_idx])
+                commonseq_idx += 1
+            else:
+                if block["blocktype"] == "UMI":
+                    bam_umis.append(new_pieces[i])
+                else:
+                    bam_bcs.append(new_pieces[i])
+                    bam_raw_bcs.append(new_pieces[i])
 
     # Add tags for corrected and raw:
     # Cell barcode
-    p_read.set_tag('CB', f'{bc1}.{bc2}')
-    p_read.set_tag('CR', f'{raw_pieces[0]}.{raw_pieces[2]}')
-    # Sample barcode
-    p_read.set_tag('SB', sbc)
-    p_read.set_tag('SR', new_pieces[4])
+    p_read.set_tag("CB", ".".join(bam_bcs))
+    p_read.set_tag("CR", ".".join(bam_raw_bcs))
     # Filler sequences
-    p_read.set_tag('FL', len(commonseq1) + len(commonseq2))
+    p_read.set_tag("FL", sum(len(seq) for seq in bam_commonseqs))
     # And raw UMI
-    p_read.set_tag('UR', new_pieces[-1])
+    p_read.set_tag("UR", ".".join(bam_umis))
     return raw_score, p_read
 
 
@@ -184,16 +219,15 @@ def RNA_paired_recs_iterator(bc_fq_fpath, p_bam_fpath):
 
 def serial_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_bc_fh):
     log.info('Building aligners and barcode decoders')
-    aligners = misc.build_RNA_bc_aligners()
-    bcd = BCDecoder(arguments.barcode_whitelist, arguments.max_bc_err_decode)
-    sbcd = SBCDecoder(arguments.sample_barcode_whitelist, arguments.max_sbc_err_decode, arguments.sbc_reject_delta)
+    aligners = misc.build_bc_aligners(arguments.config)
+    decoders = misc.build_bc_decoders(arguments.config)
 
     log.info(f'Processing first {n_first_seqs:,d} for score threshold...')
     first_scores_and_reads = []
     for i, (bc_rec, p_read) in enumerate(
             RNA_paired_recs_iterator(bc_fq_fpath, star_raw_fpath)
             ):
-        first_scores_and_reads.append(process_bc_rec_and_p_read(bc_rec, p_read, aligners, bcd, sbcd))
+        first_scores_and_reads.append(process_bc_rec_and_p_read(arguments.config, bc_rec, p_read, aligners, decoders))
         if i >= n_first_seqs:
             break
 
@@ -213,7 +247,7 @@ def serial_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_bc_
             continue
         if i % 100000 == 0 and i > 0:
             log.info(f'  {i:,d}')
-        score, read = process_bc_rec_and_p_read(bc_rec, p_read, aligners, bcd, sbcd)
+        score, read = process_bc_rec_and_p_read(arguments.config, bc_rec, p_read, aligners, decoders)
         if score >= thresh and read:
             total_out += 1
             star_w_bc_fh.write(read)
@@ -256,12 +290,11 @@ def process_chunk_of_reads(args_and_fpaths):
     Processing chunks of reads. Required to build aligners in each parallel process.
     """
     arguments, thresh, (tmp_fq_fpath, tmp_bam_fpath, tmp_out_bam_fpath, template_bam_fpath) = args_and_fpaths
-    aligners = misc.build_RNA_bc_aligners()
-    bcd = BCDecoder(arguments.barcode_whitelist, arguments.max_bc_err_decode)
-    sbcd = SBCDecoder(arguments.sample_barcode_whitelist, arguments.max_sbc_err_decode, arguments.sbc_reject_delta)
+    aligners = misc.build_bc_aligners(arguments.config)
+    decoders = misc.build_bc_decoders(arguments.config)
     with pysam.AlignmentFile(tmp_out_bam_fpath, 'wb', template=pysam.AlignmentFile(template_bam_fpath)) as out:
         for bc_rec, p_read in RNA_paired_recs_iterator(tmp_fq_fpath, tmp_bam_fpath):
-            score, read = process_bc_rec_and_p_read(bc_rec, p_read, aligners, bcd, sbcd)
+            score, read = process_bc_rec_and_p_read(arguments.config, bc_rec, p_read, aligners, decoders)
             if score >= thresh and read:
                 out.write(read)
     os.remove(tmp_fq_fpath)
@@ -278,9 +311,8 @@ def parallel_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_b
     of helper functions
     """
     chunksize=100000
-    aligners = misc.build_RNA_bc_aligners()
-    bcd = BCDecoder(arguments.barcode_whitelist, arguments.max_bc_err_decode)
-    sbcd = SBCDecoder(arguments.sample_barcode_whitelist, arguments.max_sbc_err_decode, arguments.sbc_reject_delta)
+    aligners = misc.build_bc_aligners(arguments.config)
+    decoders = misc.build_bc_decoders(arguments.config)
     with Pool(arguments.threads) as pool, \
             tempfile.TemporaryDirectory(prefix='/dev/shm/') as tmpdirname:
         log.info(f'Processing first {n_first_seqs:,d} for score threshold...')
@@ -288,7 +320,7 @@ def parallel_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_b
         for i, (bc_rec, p_read) in enumerate(
                 RNA_paired_recs_iterator(bc_fq_fpath, star_raw_fpath)
                 ):
-            first_scores_and_reads.append(process_bc_rec_and_p_read(bc_rec, p_read, aligners, bcd, sbcd))
+            first_scores_and_reads.append(process_bc_rec_and_p_read(arguments.config, bc_rec, p_read, aligners, decoders))
             if i >= n_first_seqs:
                 break
 
@@ -371,17 +403,12 @@ def correct_UMIs(arguments, input_bam_fpath, out_bam_fpath):
                     break # use the first one. Ideally same across all
 
 
-def build_complete_bc(read):
-    bc = read.get_tag('CB')
-    sbc = read.get_tag('SB')
-    return f'{bc}:{sbc}'
-
 def count_parallel_wrapper(ref_and_input_bam_fpath):
     ref, input_bam_fpath = ref_and_input_bam_fpath
     read_count_given_bc_then_feature_then_umi = defaultdict(lambda : defaultdict(Counter))
     for read in pysam.AlignmentFile(input_bam_fpath).fetch(ref):
         for gx_gn_tup in misc.gx_gn_tups_from_read(read): # count read toward all compatible genes
-            read_count_given_bc_then_feature_then_umi[build_complete_bc(read)][gx_gn_tup][read.get_tag('UB')] += 1
+            read_count_given_bc_then_feature_then_umi[read.get_tag('CB')][gx_gn_tup][read.get_tag('UB')] += 1
     for k in read_count_given_bc_then_feature_then_umi.keys():
         read_count_given_bc_then_feature_then_umi[k] = dict(read_count_given_bc_then_feature_then_umi[k])
     read_count_given_bc_then_feature_then_umi = dict(read_count_given_bc_then_feature_then_umi)
@@ -403,7 +430,6 @@ def RNA_count_matrix(arguments, input_bam_fpath):
     log.info('Finding all barcodes present...')
     sorted_complete_bcs, sorted_features = misc.get_bcs_and_features_from_bam(
             input_bam_fpath,
-            build_complete_bc,
             arguments.threads-1
             )
     i_given_feature = {feat: i for i, feat in enumerate(sorted_features)}
