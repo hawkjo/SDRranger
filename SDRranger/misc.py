@@ -99,7 +99,7 @@ def build_bc_aligners(config):
             else:
                 prefixes.append(aln[alnidx])
                 alnidx += 1
-        aligners.append(CustomBCAligner(*prefixes))
+        aligners.append(CustomBCAligner(*prefixes, unknown_read_orientation=config["unknown_read_orientation"]))
     return aligners
 
 def build_bc_decoders(config):
@@ -125,7 +125,7 @@ def average_align_score_of_first_recs(fastq_fpath, config, n_seqs=500):
     aligners = build_bc_aligners(config)
     first_scores = []
     for i, rec in enumerate(SeqIO.parse(gzip_friendly_open(fastq_fpath), 'fastq')):
-        scores_and_pieces = [al.find_norm_score_and_pieces(str(rec.seq)) for al in aligners]
+        scores_and_pieces = [al.find_norm_score_and_pieces(rec.seq) for al in aligners]
         raw_score, raw_pieces = max(scores_and_pieces)
         first_scores.append(raw_score)
         if i >= n_seqs:

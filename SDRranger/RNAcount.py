@@ -147,13 +147,12 @@ def process_bc_rec_and_p_read(config, bc_rec, p_read, aligners, decoders):
     Find barcodes etc in bc_rec and add them as tags to p_read
     """
     blocks = config["barcode_struct_r1"]["blocks"]
-    bc_seq = str(bc_rec.seq)
-    scores_and_pieces = [al.find_norm_score_and_pieces(bc_seq) for al in aligners]
-    raw_score, raw_pieces = max(scores_and_pieces)
+    scores_and_pieces = [al.find_norm_score_and_pieces(bc_rec.seq, return_seq=True) for al in aligners]
+    raw_score, raw_pieces, raw_seq = max(scores_and_pieces)
     raw_bcs = [raw_piece.upper().replace('N', 'A') for raw_piece, block in zip(raw_pieces, blocks) if block["blocktype"] == "barcodeList"]
     bcs = [decoder.decode(raw_bc) for raw_bc, decoder in zip(raw_bcs, decoders)]
 
-    best_aligner = next(al for al, (s, p) in zip(aligners, scores_and_pieces) if s == raw_score)
+    best_aligner = next(al for al, (s, p, sq) in zip(aligners, scores_and_pieces) if s == raw_score)
     commonseqs = [best_aligner.prefixes[i] for i, block in enumerate(blocks) if block["blocktype"] == "constantRegion"]
 
     bc_idx = commonseq_idx = 0
@@ -173,7 +172,7 @@ def process_bc_rec_and_p_read(config, bc_rec, p_read, aligners, decoders):
             corrected_pieces.append('N' * block["length"])
 
     new_aligner = CustomBCAligner(*corrected_pieces)
-    new_score, new_pieces = new_aligner.find_norm_score_and_pieces(bc_seq)
+    new_score, new_pieces = new_aligner.find_norm_score_and_pieces(raw_seq)
 
     bam_bcs = []
     bam_raw_bcs = []

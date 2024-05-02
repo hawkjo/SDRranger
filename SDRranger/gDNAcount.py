@@ -13,7 +13,6 @@ from Bio import SeqIO
 from collections import defaultdict, Counter
 from multiprocessing import Pool
 from scipy.sparse import lil_matrix
-from .bc_aligner import CustomBCAligner
 from .bc_decoders import BCDecoder, SBCDecoder
 
 
