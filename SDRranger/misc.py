@@ -9,13 +9,39 @@ from itertools import product
 import scipy
 import numpy as np
 from Bio import SeqIO
-
+from pywfa import WavefrontAligner
 from .bc_aligner import CustomBCAligner
 from .bc_decoders import BCDecoder, SBCDecoder
 
 
 log = logging.getLogger(__name__)
 
+class DistanceThresh:
+    def __init__(self, dist_type, max_dist):
+        self._freediv = False
+        if dist_type == "hamming":
+            self._aligner = WavefrontAligner(distance="linear", mismatch=1, gap_extension=1000, span="end-to-end", scope="score", max_steps=max_dist + 1)
+        elif dist_type == "levenshtein":
+            self._aligner = WavefrontAligner(distance="levenshtein", scope="score", max_steps=max_dist + 1)
+        elif dist_type == "freediv":
+            self._aligner = WavefrontAligner(distance="linear", mismatch=1, gap_extension=1, span="ends-free", scope="score", pattern_begin_free=0, text_begin_free=0, pattern_end_free=1000, text_end_free=1000, max_steps=max_dist + 1)
+            self._freediv = True
+        else:
+            raise ValueError('dist_type must be either hamming, levenshtein, or freediv')
+
+    def __call__(self, s1, s2):
+        lendiff = abs(len(s1) - len(s2))
+        if lendiff  >= self._aligner.max_steps:
+            return False
+        else:
+            if self._freediv:
+                self._aligner.pattern_end_free = len(s2)
+                self._aligner.text_end_free = len(s1)
+            score = -self._aligner.wavefront_align(s1, s2)
+            if self._aligner.status != 0:
+                return False
+            else:
+                return score + self._freediv * lendiff
 
 def gzip_friendly_open(fpath):
     with open(fpath, "rb") as f:
