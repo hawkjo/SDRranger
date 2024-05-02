@@ -38,9 +38,7 @@ if __name__ == '__main__':
             "matplotlib>=3.5.2",
             "pysam>=0.21.0",
             "scipy>=1.10.1",
-            "Levenshtein>=0.23.0",
-            "freebarcodes>=3.1.0",
-            "editdistance",
+            "pywfa @ git+https://github.com/kcleal/pywfa.git@master"
             ],
         zip_safe=False,
         author='John Hawkins',

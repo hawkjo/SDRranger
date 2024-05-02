@@ -1,26 +1,12 @@
-import editdistance
 import pysam
 import numpy as np
-import freebarcodes
-from . import misc
-from freebarcodes.editmeasures import free_divergence
+from .misc import DistanceThresh, gx_gn_tups_from_read
 from Bio import SeqIO
 from typing import Tuple, Dict
 from collections import Counter, defaultdict
 from scipy.sparse import lil_matrix
 from scipy.sparse.csgraph import connected_components
 
-
-def simple_hamming_distance(s1, s2):
-    return sum(1 for c1, c2 in zip(s1, s2) if c1 != c2)
-
-def free_divergence_w_diff_lens(s1, s2):
-    try:
-        return free_divergence(s1, s2)
-    except AssertionError:
-        if len(s2) < len(s1):
-            s1, s2 = s2, s1
-        return free_divergence(s1 + 'N'*(len(s2) - len(s1)), s2)
 
 def get_umi_map_from_cntr(
         umi_cntr: Counter, 
@@ -63,7 +49,7 @@ def get_umi_maps_from_bam_file(
     for read in pysam.AlignmentFile(bam_fpath).fetch(chrm, start, end):
         bc = read.get_tag('CB')
         umi = read.get_tag('UR')
-        for gx_gn_tup in misc.gx_gn_tups_from_read(read):
+        for gx_gn_tup in gx_gn_tups_from_read(read):
             umi_cntr_given_bc_then_feature[bc][gx_gn_tup][umi] += 1
 
     umi_map_given_bc_then_feature = defaultdict(dict)
@@ -86,27 +72,19 @@ def get_connected_components(
         :int:       n_vals
         :int_array: component_array
     """
-    if dist_type == 'hamming':
-        dist_func = simple_hamming_distance
-    elif dist_type == 'edit':
-        dist_func = editdistance.distance
-    elif dist_type == 'freediv':
-        dist_func = free_divergence_w_diff_lens
-    else:
-        raise ValueError('dist type must be either hamming, edit, or freediv')
+    dist_func = DistanceThresh(dist_type, max_dist)
 
     adj_mat = lil_matrix((len(umis), len(umis)), dtype=np.uint8)
     for i, umi_i in enumerate(umis):
         for j in range(i+1, len(umis)):
             umi_j = umis[j]
-            if dist_func(umi_i, umi_j) <= max_dist:
+            if dist_func(umi_i, umi_j) is not False:
                 adj_mat[i, j] = 1
                 adj_mat[j, i] = 1
     return connected_components(adj_mat)
 
-
 def get_directional_connected_components(
-        umis: list, 
+        umis: list,
         umi_cntr: Counter,
         max_dist: int = 1,
         dist_type: str = 'freediv'
@@ -118,35 +96,25 @@ def get_directional_connected_components(
         :int:       n_vals
         :int_array: component_array
     """
-    if dist_type == 'hamming':
-        dist_func = simple_hamming_distance
-    elif dist_type == 'edit':
-        dist_func = editdistance.distance
-    elif dist_type == 'freediv':
-        dist_func = free_divergence_w_diff_lens
-    else:
-        raise ValueError('dist type must be either hamming, edit, or freediv')
-
+    dist_func = DistanceThresh(dist_type, max_dist)
 
     # Build direction-based adjacency matrix: i->j if cnt_i >= 2*cnt_j - 1 as in umitools
     adj_mat = lil_matrix((len(umis), len(umis)), dtype=np.uint8)
+    nonzero_rows_given_col = defaultdict(list)
     for i, umi_i in enumerate(umis):
         umi_i_cnt = umi_cntr[umi_i]
         for j in range(i+1, len(umis)):
             umi_j = umis[j]
             umi_j_cnt = umi_cntr[umi_j]
-            i_to_j = (umi_i_cnt >= 2*umi_j_cnt - 1)
-            j_to_i = (umi_j_cnt >= 2*umi_i_cnt - 1)
-            if (i_to_j or j_to_i) and dist_func(umi_i, umi_j) <= max_dist:
-                if i_to_j:
+            if dist_func(umi_i, umi_j) is not False:
+                if umi_i_cnt >= 2 * umi_j_cnt - 1:
                     adj_mat[i, j] = 1
-                else:  # j_to_i
+                    nonzero_rows_given_col[j].append(i)
+                elif umi_j_cnt >= 2 * umi_i_cnt - 1:
                     adj_mat[j, i] = 1
+                    nonzero_rows_given_col[i].append(j)
 
     # Only allow one incoming edge per node. Keep max count or random if equal.
-    nonzero_rows_given_col = defaultdict(list)
-    for i, j in zip(*adj_mat.nonzero()):
-        nonzero_rows_given_col[j].append(i)
     for j, i_list in nonzero_rows_given_col.items():
         if len(i_list) > 1:
             max_i = max(i_list, key=lambda i: umi_cntr[umis[i]])
