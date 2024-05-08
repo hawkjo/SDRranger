@@ -10,8 +10,6 @@ import scipy
 import numpy as np
 from Bio import SeqIO
 from pywfa import WavefrontAligner
-from .bc_aligner import CustomBCAligner
-from .bc_decoders import BCDecoder, SBCDecoder
 
 
 log = logging.getLogger(__name__)
@@ -104,6 +102,8 @@ def determine_bc_and_paired_fastq_idxs(paired_fpaths, config):
     return (0, 1) if avg_score0 > avg_score1 else (1, 0)
 
 def build_bc_aligners(config):
+    from .bc_aligner import CustomBCAligner
+
     naligners = []
     barcodelengths = []
     for i, block in enumerate(config["barcode_struct_r1"]["blocks"]):
@@ -129,6 +129,8 @@ def build_bc_aligners(config):
     return aligners
 
 def build_bc_decoders(config):
+    from .bc_decoders import BCDecoder, SBCDecoder
+
     decoders = []
     lastblock = None
     lastblockidx = -1
