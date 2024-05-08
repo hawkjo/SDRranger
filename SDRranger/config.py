@@ -4,11 +4,14 @@ import json
 
 from .misc import gzip_friendly_open
 
+class CommandLineArguments:
+    def __new__(cls, arguments):
+        if "simulate_reads" in arguments:
+            return SimulationCommandLineArguments(arguments)
+        else:
+            return AnalysisCommandLineArguments(arguments)
 
-class CommandLineArguments(object):
-    """
-    Wraps the raw arguments provided by docopt.
-    """
+class CommandLineArgumentsBase:
     def __init__(self, arguments):
         self._arguments = arguments
 
@@ -26,17 +29,12 @@ class CommandLineArguments(object):
     @property
     def command(self):
         # We have to do this weird loop to deal with the way docopt stores the command name
-        for possible_command in ('count_gDNA', 'count_RNA', 'count_matrix'):
+        for possible_command in ('count_gDNA', 'count_RNA', 'count_matrix', 'simulate_reads'):
             if self._arguments.get(possible_command):
                 return possible_command
-
     @property
-    def fastq_dir(self):
-        return self._arguments['<fastq_dir>']
-
-    @property
-    def SDR_bam_file(self):
-        return self._arguments['<SDR_bam_file>']
+    def config(self):
+        return self._config
 
     @property
     def log_level(self):
@@ -47,6 +45,21 @@ class CommandLineArguments(object):
         # default to silent if the user supplies no verbosity setting
         return log_level.get(self._arguments['-v'], logging.ERROR)
 
+class AnalysisCommandLineArguments(CommandLineArgumentsBase):
+    """
+    Wraps the raw arguments provided by docopt.
+    """
+    def __init__(self, arguments):
+        super().__init__(arguments)
+
+    @property
+    def fastq_dir(self):
+        return self._arguments['<fastq_dir>']
+
+    @property
+    def SDR_bam_file(self):
+        return self._arguments['<SDR_bam_file>']
+
     @property
     def star_ref_dir(self):
         return self._arguments['--STAR-ref-dir']
@@ -56,13 +69,41 @@ class CommandLineArguments(object):
         return self._arguments['--STAR-output']
 
     @property
-    def config(self):
-        return self._config
-
-    @property
     def threads(self):
         return int(self._arguments['--threads'])
 
     @property
     def output_dir(self):
         return self._arguments['--output-dir']
+
+class SimulationCommandLineArguments(CommandLineArgumentsBase):
+    def __init__(self, arguments):
+        super().__init__(arguments)
+
+    @property
+    def fastq_prefix(self):
+        return self._arguments['--fastq-prefix']
+
+    @property
+    def nreads(self):
+        return int(self._arguments['--nreads'])
+
+    @property
+    def unique_umis(self):
+        return float(self._arguments['--unique-umis'])
+
+    @property
+    def seed(self):
+        return int(self._arguments['--seed'])
+
+    @property
+    def error_probability(self):
+        return float(self._arguments['--error-probability'])
+
+    @property
+    def substitution_probability(self):
+        return float(self._arguments['--substitution-probability'])
+
+    @property
+    def insertion_probability(self):
+        return float(self._arguments['--insertion-probability'])
