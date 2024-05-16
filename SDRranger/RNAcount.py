@@ -279,22 +279,22 @@ def chunked_RNA_paired_recs_tmp_files_iterator(arguments, thresh, bc_fq_fpath, p
         bc_chunk.append(bc_rec)
         p_chunk.append(p_read)
         if i % chunksize == 0 and i > 0:
-            yield arguments, thresh, write_chunk(arguments, tmpdirname, p_bam_fpath, i, bc_chunk, p_chunk)
+            yield arguments.config, thresh, write_chunk(arguments, tmpdirname, p_bam_fpath, i, bc_chunk, p_chunk)
             bc_chunk, p_chunk = [], []
     if i % chunksize:
-        yield arguments, thresh, write_chunk(arguments, tmpdirname, p_bam_fpath, i, bc_chunk, p_chunk)
+        yield arguments.config, thresh, write_chunk(arguments, tmpdirname, p_bam_fpath, i, bc_chunk, p_chunk)
 
 
 def process_chunk_of_reads(args_and_fpaths):
     """
     Processing chunks of reads. Required to build aligners in each parallel process.
     """
-    arguments, thresh, (tmp_fq_fpath, tmp_bam_fpath, tmp_out_bam_fpath, template_bam_fpath) = args_and_fpaths
-    aligners = misc.build_bc_aligners(arguments.config)
-    decoders = misc.build_bc_decoders(arguments.config)
+    config, thresh, (tmp_fq_fpath, tmp_bam_fpath, tmp_out_bam_fpath, template_bam_fpath) = args_and_fpaths
+    aligners = misc.build_bc_aligners(config)
+    decoders = misc.build_bc_decoders(config)
     with pysam.AlignmentFile(tmp_out_bam_fpath, 'wb', template=pysam.AlignmentFile(template_bam_fpath)) as out:
         for bc_rec, p_read in RNA_paired_recs_iterator(tmp_fq_fpath, tmp_bam_fpath):
-            score, read = process_bc_rec_and_p_read(arguments.config, bc_rec, p_read, aligners, decoders)
+            score, read = process_bc_rec_and_p_read(config, bc_rec, p_read, aligners, decoders)
             if score >= thresh and read:
                 out.write(read)
     os.remove(tmp_fq_fpath)
