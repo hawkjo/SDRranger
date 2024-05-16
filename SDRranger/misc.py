@@ -5,6 +5,7 @@ import logging
 import pysam
 import json
 from itertools import product
+from bisect import bisect
 
 import scipy
 import numpy as np
@@ -192,3 +193,34 @@ def write_matrix(M, bcs, features, out_dir):
     cols_fpath = os.path.join(out_dir, 'features.tsv.gz')
     with gzip.open(cols_fpath, 'wt') as out:
         out.write('\n'.join([f'{gx}\t{gn}\tGene Expression' for gx, gn in features]))
+
+def sort_and_index_readname_bam(input_bam_fpath, output_bam_fpath, threads=1):
+    pysam.sort("-N", "-@", str(threads), "-o", output_bam_fpath, input_bam_fpath)
+    with pysam.AlignmentFile(output_bam_fpath, "r", threads=threads) as bam:
+        i_readnames = []
+        i_offsets = []
+        lastblock = -1
+        offset = bam.tell()
+        for read in bam.fetch(until_eof=True):
+            block = offset >> 16
+            if block > lastblock:
+                i_readnames.append(read.query_name)
+                i_offsets.append(offset)
+                lastblock = block
+            offset = bam.tell()
+
+    return i_readnames, i_offsets
+
+def get_bam_read_by_name(name, bam, index, threads=1):
+    i_readnames, i_offsets = index
+    idx = bisect(i_readnames, name) - 1
+    needclose = False
+    if not isinstance(bam, pysam.AlignmentFile):
+        bam = pysam.AlignmentFile(bam_fpath, "r", threads=threads)
+        needclose = True
+    bam.seek(i_offsets[idx])
+    for bread in bam.fetch(until_eof=True):
+        if names_pair(bread.query_name, name):
+            if needclose:
+                bam.close()
+            return bread

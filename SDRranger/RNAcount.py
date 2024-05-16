@@ -124,7 +124,7 @@ def run_STAR_RNA(arguments, fastq_fpath):
     out_prefix = os.path.join(star_out_dir, f'{fastq_bname}_')
     cmd_star = [
         'STAR',
-        f'--runThreadN 1', # required to keep order matching with fastq file
+        f'--runThreadN {arguments.threads}',
         f'--genomeDir {arguments.star_ref_dir}',
         f'--readFilesIn {fastq_fpath}',
         f'--outFileNamePrefix {out_prefix}',
@@ -255,57 +255,55 @@ def serial_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_bc_
     log.info(f'{total_out:,d} records output')
 
 
-def write_chunk(arguments, tmpdirname, template_bam_fpath, i, bc_chunk, p_chunk):
+def write_chunk(tmpdirname, i, bc_chunk):
     """
     Writes chunks to files
     """
     tmp_fq_fpath = os.path.join(tmpdirname, f'{i}.fq')
-    tmp_bam_fpath = os.path.join(tmpdirname, f'{i}.bam')
     tmp_out_bam_fpath = os.path.join(tmpdirname, f'{i}.parsed.bam')
     with open(tmp_fq_fpath, 'w') as fq_out:
         SeqIO.write(bc_chunk, fq_out, 'fastq')
-    with pysam.AlignmentFile(tmp_bam_fpath, 'wb', template=pysam.AlignmentFile(template_bam_fpath)) as bam_out:
-        for p_read in p_chunk:
-            bam_out.write(p_read)
-    return tmp_fq_fpath, tmp_bam_fpath, tmp_out_bam_fpath, template_bam_fpath
+    return tmp_fq_fpath, tmp_out_bam_fpath
 
 
-def chunked_RNA_paired_recs_tmp_files_iterator(arguments, thresh, bc_fq_fpath, p_bam_fpath, tmpdirname, chunksize):
+def chunked_RNA_recs_tmp_files_iterator(bc_fq_fpath, tmpdirname, chunksize):
     """
     Breaks pairs into chunks and writes to files.
     """
-    bc_chunk, p_chunk = [], []
-    for i, (bc_rec, p_read) in enumerate(RNA_paired_recs_iterator(bc_fq_fpath, p_bam_fpath)):
-        bc_chunk.append(bc_rec)
-        p_chunk.append(p_read)
+    bc_chunk = []
+    for i, bc_req in enumerate(SeqIO.parse(misc.gzip_friendly_open(bc_fq_fpath), 'fastq')):
+        bc_chunk.append(bc_req)
         if i % chunksize == 0 and i > 0:
-            yield arguments.config, thresh, write_chunk(arguments, tmpdirname, p_bam_fpath, i, bc_chunk, p_chunk)
+            yield write_chunk(tmpdirname, i, bc_chunk)
             bc_chunk, p_chunk = [], []
     if i % chunksize:
-        yield arguments.config, thresh, write_chunk(arguments, tmpdirname, p_bam_fpath, i, bc_chunk, p_chunk)
+        yield write_chunk(tmpdirname, i, bc_chunk)
 
 
 def process_chunk_of_reads(args_and_fpaths):
     """
     Processing chunks of reads. Required to build aligners in each parallel process.
     """
-    config, thresh, (tmp_fq_fpath, tmp_bam_fpath, tmp_out_bam_fpath, template_bam_fpath) = args_and_fpaths
+    (tmp_fq_fpath, tmp_out_bam_fpath), (config, thresh, sorted_bam_fpath, sorted_bam_idx) = args_and_fpaths
     aligners = misc.build_bc_aligners(config)
     decoders = misc.build_bc_decoders(config)
-    with pysam.AlignmentFile(tmp_out_bam_fpath, 'wb', template=pysam.AlignmentFile(template_bam_fpath)) as out:
-        for bc_rec, p_read in RNA_paired_recs_iterator(tmp_fq_fpath, tmp_bam_fpath):
+    with (pysam.AlignmentFile(tmp_out_bam_fpath, 'wb', template=pysam.AlignmentFile(sorted_bam_fpath)) as out,
+          pysam.AlignmentFile(sorted_bam_fpath, 'rb') as rbam):
+        for bc_rec in SeqIO.parse(misc.gzip_friendly_open(tmp_fq_fpath), 'fastq'):
+            p_read = misc.get_bam_read_by_name(bc_rec.id, rbam, sorted_bam_idx)
+            if not p_read:
+                continue
             score, read = process_bc_rec_and_p_read(config, bc_rec, p_read, aligners, decoders)
             if score >= thresh and read:
                 out.write(read)
     os.remove(tmp_fq_fpath)
-    os.remove(tmp_bam_fpath)
     return tmp_out_bam_fpath
 
 
 def parallel_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_bc_fh):
     """
     Parallel version of serial process.
-    
+
     Rather more involved. pysam doesn't parallelize well. AlignedSegment's don't pickle. So one
     must create a large number of temporary files and process things that way, with multiple levels
     of helper functions
@@ -328,6 +326,9 @@ def parallel_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_b
         thresh = np.average(scores) - 2 * np.std(scores)
         log.info(f'Score threshold: {thresh:.2f}')
 
+        star_readname_sorted_fpath = star_raw_fpath + "_readname_sorted.bam"
+        bamidx = misc.sort_and_index_readname_bam(star_raw_fpath, star_readname_sorted_fpath, arguments.threads)
+
         log.info(f'Using temporary directory {tmpdirname}')
         total_out = 0
 
@@ -335,7 +336,7 @@ def parallel_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_b
         #
         # First: pysam AlignedSegment objects are not picklable, so they cannot be sent to parallel
         # processes directly. Hence, each chunk of reads must be written to an intermediate file
-        # and processed as a file. The only objects passed around are arguments and filenames 
+        # and processed as a file. The only objects passed around are arguments and filenames
         #
         # Second: pysam does not easily append to an existing bam file, so we pass a filehandle
         # opened in the parent function that does not close until the full, combined bam file is
@@ -351,19 +352,18 @@ def parallel_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_b
         # imap separately for each chunk thus created. This works as desired, though obviously
         # sacrifices a bit in performance as the chunks are hard-separated before parallelism.
         # However, for this problem all pieces in each chunk take very similar amount of time to
-        # process, so the performance sacrifice is not too significant. 
-        chunk_iter = chunked_RNA_paired_recs_tmp_files_iterator(
-                arguments,
-                thresh,
+        # process, so the performance sacrifice is not too significant.
+        chunk_iter = chunked_RNA_recs_tmp_files_iterator(
                 bc_fq_fpath,
-                star_raw_fpath,
                 tmpdirname,
                 chunksize=chunksize)
         i = 0
         while True:
-            chunk_of_args_and_fpaths = list(itertools.islice(chunk_iter, arguments.threads))
-            if not chunk_of_args_and_fpaths:
+            chunk = list(itertools.islice(chunk_iter, arguments.threads))
+            if not chunk:
                 break
+            chunk_of_args_and_fpaths = zip(chunk,
+                                           itertools.repeat((arguments.config, thresh, star_readname_sorted_fpath, bamidx)))
             for j, tmp_out_bam_fpath in enumerate(pool.imap(
                 process_chunk_of_reads,
                 chunk_of_args_and_fpaths)):
@@ -374,8 +374,9 @@ def parallel_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_b
                     star_w_bc_fh.write(read)
                 os.remove(tmp_out_bam_fpath)
             i += 1
-    
-    nrecs = int(misc.file_prefix_from_fpath(tmp_out_bam_fpath).split('.')[0]) 
+
+    os.remove(star_readname_sorted_fpath)
+    nrecs = int(misc.file_prefix_from_fpath(tmp_out_bam_fpath).split('.')[0])
     log.info(f'{nrecs:,d} records processed')
     log.info(f'{total_out:,d} records output')
 
