@@ -106,9 +106,13 @@ def process_gDNA_fastqs(arguments):
 
         log.info('Adding barcode tags to mapped reads...')
         template_bam_fpath = star_bam_and_tags_fpaths[0][0]
+        if arguments.threads == 1:
+            readsiter = iter(serial_gDNA_add_tags_to_reads(tags_fpath, star_out_fpath))
+        else:
+            readsiter = iter(parallel_gDNA_add_tags_to_reads(tags_fpath, star_out_fpath, arguments.threads))
         with pysam.AlignmentFile(star_w_bc_fpath, 'wb', template=pysam.AlignmentFile(template_bam_fpath)) as bam_out:
             for star_out_fpath, tags_fpath in star_bam_and_tags_fpaths:
-                for read in gDNA_add_tags_to_reads(tags_fpath, star_out_fpath):
+                for read in readsiter:
                     bam_out.write(read)
         for fpath in (sans_bc_fq_fpath, sans_bc_paired_fq_fpath, tags_fpath):
             os.remove(fpath)
@@ -137,7 +141,7 @@ def run_STAR_gDNA(arguments, R1_fpath, R2_fpath):
     out_prefix = os.path.join(star_out_dir, f'{R1_bname}_')
     cmd_star = [
         'STAR',
-        f'--runThreadN 1', # required to keep order matching with fastq file
+        f'--runThreadN {arguments.threads}',
         f'--genomeDir {arguments.star_ref_dir}',
         f'--readFilesIn {R1_fpath} {R2_fpath}',
         f'--outFileNamePrefix {out_prefix}',
@@ -212,19 +216,33 @@ def build_tags_iter(tags_fpath):
         yield read_name, tags
 
 
-def gDNA_add_tags_to_reads(tags_fpath, bam_fpath):
+def serial_gDNA_add_tags_to_reads(tags_fpath, bam_fpath):
     """
     Iterates bam reads and matching tags records and adds tags to reads.
     """
     tags_iter = build_tags_iter(tags_fpath)
     read_name = 'Lorem ipsum'
     for read in pysam.AlignmentFile(bam_fpath).fetch(until_eof=True):
-        while not misc.names_pair(read_name, str(read.qname)):
+        while not misc.names_pair(read_name, str(read.query_name)):
             read_name, tags = next(tags_iter)
         for name, val in tags:
             read.set_tag(name, val)
         yield read
 
+def parallel_gDNA_add_tags_to_reads(tags_fpath, bam_fpath, threads):
+    """
+    Iterates bam reads and matching tags records and adds tags to reads.
+    """
+    sortedbampath = bam_fpath + "_readname_sorted.bam"
+    bamidx = misc.sort_and_index_readname_bam(bam_fpath, sortedbampath, threads)
+    tags_iter = build_tags_iter(tags_fpath)
+    with pysam.AlignmentFile(sortedbampath) as bam:
+        for read_name, tags in tags_iter:
+            for read in misc.get_bam_read_by_name(read_name, bam, bamidx):
+                for name, val in tags:
+                    read.set_tag(name, val)
+                yield read
+    os.remove(sortedbampath)
 
 def tag_type_from_val(val):
     if isinstance(val, str):
