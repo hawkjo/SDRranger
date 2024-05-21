@@ -178,15 +178,15 @@ def process_bc_rec(config, bc_rec, aligners, decoders):
     for i, block in enumerate(blocks):
         if block["blocktype"] == "barcodeList":
             if bcs[bc_idx] is None:
-                return raw_score, None
-            if block["blockfunction" != "discard"]:
+                return raw_score, None, None
+            if block["blockfunction"] != "discard":
                 bam_bcs.append(bcs[bc_idx])
                 bam_raw_bcs.append(raw_pieces[i])
             bc_idx += 1
         elif block["blocktype"] == "constantRegion":
             if commonseqs[commonseq_idx] is None:
-                return raw_score, None
-            if block["blockfunction" != "discard"]:
+                return raw_score, None, None
+            if block["blockfunction"] != "discard":
                 bam_commonseqs.append(commonseqs[commonseq_idx])
             commonseq_idx += 1
 
@@ -326,22 +326,21 @@ def process_chunk_of_reads(args_and_fpaths):
     """
     Processing chunks of reads. Required to build aligners in each parallel process.
     """
-    arguments, thresh, (tmp_bc_fq_fpath,
+    config, thresh, (tmp_bc_fq_fpath,
             tmp_paired_fq_fpath,
             tmp_out_bc_fq_fpath,
             tmp_out_paired_fq_fpath,
             tmp_out_tags_fpath,
             template_bam_fpath) = args_and_fpaths
-    aligners = misc.build_bc_aligners(arguments.config)
-    decoders = misc.build_bc_decoders(arguments.config)
-    bcd = BCDecoder(arguments.barcode_whitelist, arguments.max_bc_err_decode)
+    aligners = misc.build_bc_aligners(config)
+    decoders = misc.build_bc_decoders(config)
     with open(tmp_out_bc_fq_fpath, 'w') as bc_fq_fh, \
             open(tmp_out_paired_fq_fpath, 'w') as paired_fq_fh, \
             open(tmp_out_tags_fpath, 'w') as tag_fh:
         for i, (bc_rec, paired_rec) in enumerate(zip(
             SeqIO.parse(misc.gzip_friendly_open(tmp_bc_fq_fpath), 'fastq'),
             SeqIO.parse(misc.gzip_friendly_open(tmp_paired_fq_fpath), 'fastq'))):
-            score, sans_bc_rec, tags = process_bc_rec(aligners, bc_rec, aligners, decoders)
+            score, sans_bc_rec, tags = process_bc_rec(config, bc_rec, aligners, decoders)
             if score >= thresh and sans_bc_rec:
                 SeqIO.write(sans_bc_rec, bc_fq_fh, 'fastq')
                 SeqIO.write(paired_rec, paired_fq_fh, 'fastq')
@@ -357,13 +356,12 @@ def parallel_process_gDNA_fastqs(arguments, bc_fq_fpath, paired_fq_fpath, sans_b
     chunksize=100000
     aligners = misc.build_bc_aligners(arguments.config)
     decoders = misc.build_bc_decoders(arguments.config)
-    bcd = BCDecoder(arguments.barcode_whitelist, arguments.max_bc_err_decode)
     with Pool(arguments.threads) as pool, \
             tempfile.TemporaryDirectory(prefix='/dev/shm/') as tmpdirname:
         log.info(f'Processing first {n_first_seqs:,d} for score threshold...')
         first_scores_recs_tags = []
         for i, bc_rec in enumerate(SeqIO.parse(misc.gzip_friendly_open(bc_fq_fpath), 'fastq')):
-            first_scores_recs_tags.append(process_bc_rec(aligners, bc_rec, aligners, decoders))
+            first_scores_recs_tags.append(process_bc_rec(arguments.config, bc_rec, aligners, decoders))
             if i >= n_first_seqs:
                 break
 
@@ -378,7 +376,7 @@ def parallel_process_gDNA_fastqs(arguments, bc_fq_fpath, paired_fq_fpath, sans_b
         # in a more normal fashion due to not passing around pysam objects. That would speed things
         # up moderately, but since the expected gain is low we keep the same architecture here.
         chunk_iter = chunked_gDNA_paired_recs_tmp_files_iterator(
-                arguments,
+                arguments.config,
                 thresh,
                 bc_fq_fpath,
                 paired_fq_fpath,
