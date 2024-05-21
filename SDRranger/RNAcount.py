@@ -290,12 +290,10 @@ def process_chunk_of_reads(args_and_fpaths):
     with (pysam.AlignmentFile(tmp_out_bam_fpath, 'wb', template=pysam.AlignmentFile(sorted_bam_fpath)) as out,
           pysam.AlignmentFile(sorted_bam_fpath, 'rb') as rbam):
         for bc_rec in SeqIO.parse(misc.gzip_friendly_open(tmp_fq_fpath), 'fastq'):
-            p_read = misc.get_bam_read_by_name(bc_rec.id, rbam, sorted_bam_idx)
-            if not p_read:
-                continue
-            score, read = process_bc_rec_and_p_read(config, bc_rec, p_read, aligners, decoders)
-            if score >= thresh and read:
-                out.write(read)
+            for p_read in misc.get_bam_read_by_name(bc_rec.id, rbam, sorted_bam_idx):
+                score, read = process_bc_rec_and_p_read(config, bc_rec, p_read, aligners, decoders)
+                if score >= thresh and read:
+                    out.write(read)
     os.remove(tmp_fq_fpath)
     return tmp_out_bam_fpath
 

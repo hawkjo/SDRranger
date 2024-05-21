@@ -201,12 +201,17 @@ def sort_and_index_readname_bam(input_bam_fpath, output_bam_fpath, threads=1):
         i_offsets = []
         lastblock = -1
         offset = bam.tell()
+        lastreadname = ""
+        lastreadoffset = offset
         for read in bam.fetch(until_eof=True):
             block = offset >> 16
             if block > lastblock:
                 i_readnames.append(read.query_name)
-                i_offsets.append(offset)
+                i_offsets.append(offset if read.query_name != lastreadname else lastreadoffset)
                 lastblock = block
+            if read.query_name != lastreadname:
+                lastreadname = read.query_name
+                lastreadoffset = offset
             offset = bam.tell()
 
     return i_readnames, i_offsets
@@ -219,8 +224,15 @@ def get_bam_read_by_name(name, bam, index, threads=1):
         bam = pysam.AlignmentFile(bam_fpath, "r", threads=threads)
         needclose = True
     bam.seek(i_offsets[idx])
+    startblock = None
+    haveread = False
     for bread in bam.fetch(until_eof=True):
+        if startblock is None:
+            startblock = bam.tell() >> 16
         if names_pair(bread.query_name, name):
-            if needclose:
-                bam.close()
-            return bread
+            haveread = True
+            yield bread
+        elif haveread or bam.tell() >> 16 > startblock:
+            break
+    if needclose:
+        bam.close()
