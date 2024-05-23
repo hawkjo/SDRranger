@@ -63,11 +63,15 @@ def process_RNA_fastqs(arguments):
         log.info(f'Detected barcodes in read{bc_fq_idx+1} files')
 
         paired_fq_bam_fpaths = []
+        namepairidxs = []
         if not arguments.star_output_path:
             log.info(f'Running STAR alignment...')
             for tup_fastq_fpaths in paired_fpaths:
                 bc_fq_fpath = tup_fastq_fpaths[bc_fq_idx]
                 paired_fq_fpath = tup_fastq_fpaths[paired_fq_idx]
+
+                namepairidxs.append(misc.get_namepair_index(bc_fq_fpath, paired_fq_fpath))
+
                 log.info(f'  {paired_fq_fpath}')
                 star_out_dir, star_out_fpath = run_STAR_RNA(arguments, paired_fq_fpath)
                 paired_fq_bam_fpaths.append((bc_fq_fpath, star_out_fpath))
@@ -82,11 +86,11 @@ def process_RNA_fastqs(arguments):
         template_bam = paired_fq_bam_fpaths[0][1]
         process_fastqs_func = serial_process_RNA_fastqs if arguments.threads == 1 else parallel_process_RNA_fastqs
         with pysam.AlignmentFile(star_w_bc_fpath, 'wb', template=pysam.AlignmentFile(template_bam)) as star_w_bc_fh:
-            for bc_fq_fpath, star_raw_fpath in paired_fq_bam_fpaths:
+            for (bc_fq_fpath, star_raw_fpath), namepairidx in zip(paired_fq_bam_fpaths, namepairidxs):
                 log.info('Processing files:')
                 log.info(f'  barcode fastq: {bc_fq_fpath}')
                 log.info(f'  paired bam:    {star_raw_fpath}')
-                process_fastqs_func(arguments, bc_fq_fpath, star_raw_fpath, star_w_bc_fh)
+                process_fastqs_func(arguments, bc_fq_fpath, star_raw_fpath, star_w_bc_fh, namepairidx)
         shutil.rmtree(star_out_dir)  # clean up intermediate STAR files
     
     if completed < 2:
@@ -217,7 +221,7 @@ def RNA_paired_recs_iterator(bc_fq_fpath, p_bam_fpath):
         yield bc_rec, p_read
 
 
-def serial_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_bc_fh):
+def serial_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_bc_fh, namepairidx):
     log.info('Building aligners and barcode decoders')
     aligners = misc.build_bc_aligners(arguments.config)
     decoders = misc.build_bc_decoders(arguments.config)
@@ -298,7 +302,7 @@ def process_chunk_of_reads(args_and_fpaths):
     return tmp_out_bam_fpath
 
 
-def parallel_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_bc_fh):
+def parallel_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_bc_fh, namepairidx):
     """
     Parallel version of serial process.
 
@@ -325,7 +329,7 @@ def parallel_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_b
         log.info(f'Score threshold: {thresh:.2f}')
 
         star_readname_sorted_fpath = star_raw_fpath + "_readname_sorted.bam"
-        bamidx = misc.sort_and_index_readname_bam(star_raw_fpath, star_readname_sorted_fpath, arguments.threads)
+        bamidx = misc.sort_and_index_readname_bam(star_raw_fpath, star_readname_sorted_fpath, namepairidx, arguments.threads)
 
         log.info(f'Using temporary directory {tmpdirname}')
         total_out = 0

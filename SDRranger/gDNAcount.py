@@ -60,6 +60,7 @@ def process_gDNA_fastqs(arguments):
         log.info(f'  {star_w_bc_fpath}')
     
         paired_align_fqs_and_tags_fpaths = []
+        namepairidxs = []
         process_fastqs_func = serial_process_gDNA_fastqs if arguments.threads == 1 else parallel_process_gDNA_fastqs
         for fpath_tup in paired_fpaths:
             bc_fq_fpath = fpath_tup[bc_fq_idx]
@@ -81,6 +82,9 @@ def process_gDNA_fastqs(arguments):
             log.info(f'  sans-bc fastq: {sans_bc_fq_fpath}')
             log.info(f'  sans-bc fastq: {sans_bc_paired_fq_fpath}')
             log.info(f'  tags file:     {tags_fpath}')
+
+            namepairidxs.append(misc.get_namepair_index(bc_fq_fpath, paired_fq_fpath))
+
             if all(os.path.exists(fpath) for fpath in [sans_bc_fq_fpath, sans_bc_paired_fq_fpath, tags_fpath]):
                 log.info('Barcode output found. Skipping barcode detection')
             else:
@@ -106,12 +110,12 @@ def process_gDNA_fastqs(arguments):
 
         log.info('Adding barcode tags to mapped reads...')
         template_bam_fpath = star_bam_and_tags_fpaths[0][0]
-        if arguments.threads == 1:
-            readsiter = iter(serial_gDNA_add_tags_to_reads(tags_fpath, star_out_fpath))
-        else:
-            readsiter = iter(parallel_gDNA_add_tags_to_reads(tags_fpath, star_out_fpath, arguments.threads))
         with pysam.AlignmentFile(star_w_bc_fpath, 'wb', template=pysam.AlignmentFile(template_bam_fpath)) as bam_out:
-            for star_out_fpath, tags_fpath in star_bam_and_tags_fpaths:
+            for (star_out_fpath, tags_fpath), namepairidx in zip(star_bam_and_tags_fpaths, namepairidxs):
+                if arguments.threads == 1:
+                    readsiter = iter(serial_gDNA_add_tags_to_reads(tags_fpath, star_out_fpath))
+                else:
+                    readsiter = iter(parallel_gDNA_add_tags_to_reads(tags_fpath, star_out_fpath, namepairidx, arguments.threads))
                 for read in readsiter:
                     bam_out.write(read)
         for fpath in (sans_bc_fq_fpath, sans_bc_paired_fq_fpath, tags_fpath):
@@ -229,12 +233,12 @@ def serial_gDNA_add_tags_to_reads(tags_fpath, bam_fpath):
             read.set_tag(name, val)
         yield read
 
-def parallel_gDNA_add_tags_to_reads(tags_fpath, bam_fpath, threads):
+def parallel_gDNA_add_tags_to_reads(tags_fpath, bam_fpath, namepairidx, threads):
     """
     Iterates bam reads and matching tags records and adds tags to reads.
     """
     sortedbampath = bam_fpath + "_readname_sorted.bam"
-    bamidx = misc.sort_and_index_readname_bam(bam_fpath, sortedbampath, threads)
+    bamidx = misc.sort_and_index_readname_bam(bam_fpath, sortedbampath, namepairidx, threads)
     tags_iter = build_tags_iter(tags_fpath)
     with pysam.AlignmentFile(sortedbampath) as bam:
         for read_name, tags in tags_iter:
