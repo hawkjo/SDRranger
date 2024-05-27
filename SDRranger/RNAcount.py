@@ -11,6 +11,7 @@ import scipy
 from . import misc
 from Bio import SeqIO
 from collections import defaultdict, Counter
+from functools import partial
 from multiprocessing import Pool
 from scipy.sparse import lil_matrix
 from .bc_aligner import CustomBCAligner
@@ -84,7 +85,7 @@ def process_RNA_fastqs(arguments):
         log.info(f'  {star_w_bc_fpath}')
     
         template_bam = paired_fq_bam_fpaths[0][1]
-        process_fastqs_func = serial_process_RNA_fastqs if arguments.threads == 1 else parallel_process_RNA_fastqs
+        process_fastqs_func = partial(serial_process_RNA_fastqs, sameorder=not arguments.star_output_path) if arguments.threads == 1 else parallel_process_RNA_fastqs
         with pysam.AlignmentFile(star_w_bc_fpath, 'wb', template=pysam.AlignmentFile(template_bam)) as star_w_bc_fh:
             for (bc_fq_fpath, star_raw_fpath), namepairidx in zip(paired_fq_bam_fpaths, namepairidxs):
                 log.info('Processing files:')
@@ -220,17 +221,31 @@ def RNA_paired_recs_iterator(bc_fq_fpath, p_bam_fpath):
         bc_rec = next(rec for rec in bc_fq_iter if misc.names_pair(str(rec.id), str(p_read.qname)))
         yield bc_rec, p_read
 
+def RNA_unpaired_recs_iterator(bc_fq_fpath, p_bam_fpath, bamidx):
+    """
+    Iterates bc fastq reads with matching bam records when order of reads is not the same.
+    """
+    bam = pysam.AlignmentFile(p_bam_fpath)
+    for bc_rec in SeqIO.parse(misc.gzip_friendly_open(bc_fq_fpath), 'fastq'):
+        for p_read in misc.get_bam_read_by_name(bc_rec.id, bam, bamidx):
+            yield bc_rec, p_read
 
-def serial_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_bc_fh, namepairidx):
+
+def serial_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_bc_fh, namepairidx, sameorder=True):
     log.info('Building aligners and barcode decoders')
     aligners = misc.build_bc_aligners(arguments.config)
     decoders = misc.build_bc_decoders(arguments.config)
 
+    if not sameorder:
+        star_readname_sorted_fpath = star_raw_fpath + "_readname_sorted.bam"
+        bamidx = misc.sort_and_index_readname_bam(star_raw_fpath, star_readname_sorted_fpath, namepairidx, arguments.threads)
+        iterator = RNA_unpaired_recs_iterator(bc_fq_fpath, star_readname_sorted_fpath, bamidx)
+    else:
+        iterator = RNA_paired_recs_iterator(bc_fq_fpath, star_raw_fpath)
+
     log.info(f'Processing first {n_first_seqs:,d} for score threshold...')
     first_scores_and_reads = []
-    for i, (bc_rec, p_read) in enumerate(
-            RNA_paired_recs_iterator(bc_fq_fpath, star_raw_fpath)
-            ):
+    for i, (bc_rec, p_read) in enumerate(iterator):
         first_scores_and_reads.append(process_bc_rec_and_p_read(arguments.config, bc_rec, p_read, aligners, decoders))
         if i >= n_first_seqs:
             break
@@ -244,9 +259,7 @@ def serial_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_bc_
         star_w_bc_fh.write(read)
 
     log.info('Continuing...')
-    for i, (bc_rec, p_read) in enumerate(
-            RNA_paired_recs_iterator(bc_fq_fpath, star_raw_fpath)
-            ):
+    for i, (bc_rec, p_read) in enumerate(iterator):
         if i <= n_first_seqs:
             continue
         if i % 100000 == 0 and i > 0:
@@ -255,6 +268,10 @@ def serial_process_RNA_fastqs(arguments, bc_fq_fpath, star_raw_fpath, star_w_bc_
         if score >= thresh and read:
             total_out += 1
             star_w_bc_fh.write(read)
+
+    if not sameorder:
+        os.remove(star_readname_sorted_fpath)
+
     log.info(f'{i+1:,d} records processed')
     log.info(f'{total_out:,d} records output')
 
@@ -291,10 +308,8 @@ def process_chunk_of_reads(args_and_fpaths):
     (tmp_fq_fpath, tmp_out_bam_fpath), (config, thresh, sorted_bam_fpath, sorted_bam_idx) = args_and_fpaths
     aligners = misc.build_bc_aligners(config)
     decoders = misc.build_bc_decoders(config)
-    with (pysam.AlignmentFile(tmp_out_bam_fpath, 'wb', template=pysam.AlignmentFile(sorted_bam_fpath)) as out,
-          pysam.AlignmentFile(sorted_bam_fpath, 'rb') as rbam):
-        for bc_rec in SeqIO.parse(misc.gzip_friendly_open(tmp_fq_fpath), 'fastq'):
-            for p_read in misc.get_bam_read_by_name(bc_rec.id, rbam, sorted_bam_idx):
+    with pysam.AlignmentFile(tmp_out_bam_fpath, 'wb', template=pysam.AlignmentFile(sorted_bam_fpath)) as out:
+        for bc_rec, p_read in RNA_unpaired_recs_iterator(tmp_fq_fpath, sorted_bam_fpath, sorted_bam_idx):
                 score, read = process_bc_rec_and_p_read(config, bc_rec, p_read, aligners, decoders)
                 if score >= thresh and read:
                     out.write(read)
