@@ -78,7 +78,7 @@ def process_RNA_fastqs(arguments):
                 paired_fq_bam_fpaths.append((bc_fq_fpath, star_out_fpath))
         else:
             log.info(f'Using STAR results from {arguments.star_output_path}')
-            for fpaths, bampath in zip(paired_fpaths, arguments.star_output_path, strict=True):
+            for fpaths, bampath in zip(sorted(paired_fpaths, key=lambda x: x[bc_fq_idx]), arguments.star_output_path, strict=True):
                 paired_fq_bam_fpaths.append((fpaths[bc_fq_idx], bampath))
     
         log.info('Writing output to:')

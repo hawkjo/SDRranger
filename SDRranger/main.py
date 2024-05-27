@@ -3,7 +3,8 @@ SDRranger: Processing Genomic-Transcriptomic TAP-Seq data.
 
 Usage:
   SDRranger count_RNA        <fastq_dir> (--STAR-ref-dir=<> | --STAR-output=<>...) --config=<> [--output-dir=<>] [--threads=<>] [-v | -vv | -vvv]
-  SDRranger count_gDNA       <fastq_dir> --STAR-ref-dir=<> --config=<> [--output-dir=<>] [--threads=<>] [-v | -vv | -vvv]
+  SDRranger count_gDNA       <fastq_dir> (--STAR-ref-dir=<> | --STAR-output=<>...) --config=<> [--output-dir=<>] [--threads=<>] [-v | -vv | -vvv]
+  SDRranger preprocess_gDNA  <fastq_dir> --config=<> [--output-dir=<>] [--threads=<>] [-v | -vv | -vvv]
   SDRranger count_matrix       <SDR_bam_file> --output-dir=<> [--threads=<>] [-v | -vv | -vvv]
 
 Options:
@@ -19,9 +20,10 @@ Options:
   --version     Show version.
 
 Commands:
-  count_gDNA    Process and count Genomic gDNA files
-  count_RNA     Process and count Transcriptomic RNA files
-  count_matrix  Build a count matrix (or matrices) from an existing bam file
+  preprocess_gDNA  Preprocess Genomic gDNA files such that STAR can be run on the output.
+  count_gDNA       Process and count Genomic gDNA files
+  count_RNA        Process and count Transcriptomic RNA files
+  count_matrix     Build a count matrix (or matrices) from an existing bam file
 """
 import logging
 import os
@@ -29,7 +31,7 @@ from docopt import docopt
 from .__init__ import __version__
 from .config import CommandLineArguments
 from .RNAcount import process_RNA_fastqs
-from .gDNAcount import process_gDNA_fastqs 
+from .gDNAcount import process_gDNA_fastqs, preprocess_gDNA_fastqs
 from .count_matrix import build_count_matrices_from_bam
 
 def main(**kwargs):
@@ -47,6 +49,7 @@ def main(**kwargs):
     commands = {
         'count_RNA': process_RNA_fastqs,
         'count_gDNA': process_gDNA_fastqs,
+        'preprocess_gDNA': preprocess_gDNA_fastqs,
         'count_matrix': build_count_matrices_from_bam,
     }
 
