@@ -1,0 +1,19 @@
+### STAR   --runMode genomeGenerate      --runThreadN 1   --genomeDir SDR001_REF_index   --genomeFastaFiles /g/steinmetz/lindenho/DLI_NGS/SDR001_STAR/SDR001_REF.fa      --genomeSAindexNbases 4   --sjdbGTFfile /g/steinmetz/lindenho/DLI_NGS/SDR001_STAR/SDR001_REF.gtf   --sjdbOverhang 99
+### GstrandBit 32
+versionGenome	2.7.4a
+genomeType	Full
+genomeFastaFiles	/g/steinmetz/lindenho/DLI_NGS/SDR001_STAR/SDR001_REF.fa 
+genomeSAindexNbases	4
+genomeChrBinNbits	18
+genomeSAsparseD	1
+genomeTransformType	None
+genomeTransformVCF	-
+sjdbOverhang	99
+sjdbFileChrStartEnd	- 
+sjdbGTFfile	/g/steinmetz/lindenho/DLI_NGS/SDR001_STAR/SDR001_REF.gtf
+sjdbGTFchrPrefix	-
+sjdbGTFfeatureExon	exon
+sjdbGTFtagExonParentTranscript	transcript_id
+sjdbGTFtagExonParentGene	gene_id
+sjdbInsertSave	Basic
+genomeFileSizes	45350912 799494
