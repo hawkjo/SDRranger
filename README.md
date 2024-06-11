@@ -2,6 +2,7 @@
 A tool for processing SDR-seq (targeted Single-cell DNA and RNA sequencing) fastq files into annotated BAM files and count matrices.
 
 ![The Single-Cell DNA RNA Lone Ranger](doc/SDRLoneRanger.png?raw=true "The Single-Cell DNA RNA Lone Ranger")
+*The Single-Cell DNA RNA Lone Ranger*
 
 ## Installation
 
