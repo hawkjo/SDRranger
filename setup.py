@@ -1,6 +1,5 @@
 from setuptools import setup
 from distutils.extension import Extension
-import numpy as np
 
 import codecs
 import os.path
@@ -30,7 +29,6 @@ if __name__ == '__main__':
           ]
         },
         include_package_data=True,
-        include_dirs=[np.get_include()],
         install_requires=[
             "numpy>=1.20.0",
             "docopt-ng",
