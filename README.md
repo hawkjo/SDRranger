@@ -3,8 +3,8 @@ A tool for processing SDR-seq (targeted Single-cell DNA and RNA sequencing) fast
 
 <p align="center">
   <img src="doc/SDRLoneRanger.png" width=50% alt="The Single-Cell DNA RNA Lone Ranger">
-  <figcaption>The Single-Cell DNA RNA Lone Ranger</figcaption>
 </p>
+<p align="center">The Single-Cell DNA RNA Lone Ranger</p>
 
 ## Installation
 
