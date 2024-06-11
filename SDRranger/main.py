@@ -1,17 +1,17 @@
 """
-SDRranger: Processing Genomic-Transcriptomic TAP-Seq data.
+SDRranger: Process SDR-seq data 
 
 Usage:
-  SDRranger count_RNA        <fastq_dir> (--STAR-ref-dir=<> | --STAR-output=<>...) --config=<> [--output-dir=<>] [--threads=<>] [-v | -vv | -vvv]
   SDRranger count_gDNA       <fastq_dir> --STAR-ref-dir=<> --config=<> [--output-dir=<>] [--threads=<>] [-v | -vv | -vvv]
-  SDRranger count_matrix       <SDR_bam_file> --output-dir=<> [--threads=<>] [-v | -vv | -vvv]
+  SDRranger count_RNA        <fastq_dir> (--STAR-ref-dir=<> | --STAR-output=<>...) --config=<> [--output-dir=<>] [--threads=<>] [-v | -vv | -vvv]
+  SDRranger count_matrix     <SDR_bam_file> --output-dir=<> [--threads=<>] [-v | -vv | -vvv]
 
 Options:
   --STAR-ref-dir=<>: Path to directory with STAR index.
   --STAR-output=<>: Path to STAR output file (BAM/SAM). Can be repeated multiple times,
                     in which case the order must correspond to the lexicographic ordering
                     of paired FASTQ files in <fastq_dir>.
-  --config=<>: Path to JSON configuration.
+  --config=<>: Path to JSON configuration file.
   --output-dir=<>: Path to output directory [default: .].
   --threads=<>: Number of threads [default: 1].
   -v: Verbose output.
