@@ -12,7 +12,7 @@ SDRranger works in Linux, and has been tested on el8 and CentOS 7.
 
 You can install SDRranger from github directly into your local (conda or virtual) environment using pip:
 ```
-pip install git+https://hawkjo@github.com/hawkjo/SDRranger.git@c755eb1fba7171d5d7e611ca67a17ad6d350d05f
+pip install git+https://github.com/hawkjo/SDRranger.git
 ```
 This typically takes a few minutes. 
 
