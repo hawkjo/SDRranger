@@ -5,12 +5,14 @@ import pysam
 import itertools
 import tempfile
 import numpy as np
+import pickle
 import subprocess
 import shutil
 import scipy
 from . import misc
 from Bio import SeqIO
 from collections import defaultdict, Counter
+from glob import glob
 from multiprocessing import Pool
 from scipy.sparse import lil_matrix
 from .bc_decoders import BCDecoder, SBCDecoder
@@ -22,6 +24,64 @@ pysam.set_verbosity(0)
 
 n_first_seqs = 10000  # n seqs for finding score threshold
 
+def preprocess_gDNA_fastqs(arguments):
+    if not os.path.exists(arguments.output_dir):
+        os.makedirs(arguments.output_dir)
+
+    paired_fpaths = misc.find_paired_fastqs_in_dir(arguments.fastq_dir)
+    log.info('Files to process:')
+    for i, (fpath1, fpath2) in enumerate(paired_fpaths):
+        log.info(f'  {fpath1}')
+        log.info(f'  {fpath2}')
+        if i < len(paired_fpaths)-1:
+            log.info('  -')
+
+    paired_align_fqs_and_tags_fpaths = []
+    namepairidxs = []
+
+    bc_fq_idx, paired_fq_idx = misc.determine_bc_and_paired_fastq_idxs(paired_fpaths, arguments.config)
+    log.info(f'Detected barcodes in read{bc_fq_idx+1} files')
+
+    process_fastqs_func = serial_process_gDNA_fastqs if arguments.threads == 1 else parallel_process_gDNA_fastqs
+    for fpath_tup in paired_fpaths:
+        bc_fq_fpath = fpath_tup[bc_fq_idx]
+        paired_fq_fpath = fpath_tup[paired_fq_idx]
+        sans_bc_fq_fname = f'sans_bc_{misc.file_prefix_from_fpath(bc_fq_fpath)}.fq'
+        sans_bc_fq_fpath = os.path.join(arguments.output_dir, sans_bc_fq_fname)
+        sans_bc_paired_fq_fname = f'sans_paired_{misc.file_prefix_from_fpath(paired_fq_fpath)}.fq'
+        sans_bc_paired_fq_fpath = os.path.join(arguments.output_dir, sans_bc_paired_fq_fname)
+        tags_fname = f'rec_names_and_tags_{misc.file_prefix_from_fpath(bc_fq_fpath)}.txt'
+        namepairidx_fname = f'namepairidx_{misc.file_prefix_from_fpath(bc_fq_fpath)}.pkl'
+        tags_fpath = os.path.join(arguments.output_dir, tags_fname)
+        if bc_fq_idx == 0:
+            paired_align_fqs_and_tags_fpaths.append((sans_bc_fq_fpath, sans_bc_paired_fq_fpath, tags_fpath))
+        else:
+            paired_align_fqs_and_tags_fpaths.append((sans_bc_paired_fq_fpath, sans_bc_fq_fpath, tags_fpath))
+
+        log.info('Processing files:')
+        log.info(f'  barcode fastq: {bc_fq_fpath}')
+        log.info(f'  paired fastq:  {paired_fq_fpath}')
+        log.info(f'  sans-bc fastq: {sans_bc_fq_fpath}')
+        log.info(f'  sans-bc fastq: {sans_bc_paired_fq_fpath}')
+        log.info(f'  tags file:     {tags_fpath}')
+
+        namepairidx = misc.get_namepair_index(bc_fq_fpath, paired_fq_fpath)
+        namepairidxs.append(namepairidx)
+        with open(namepairidx_fname, "wb") as pkl:
+            pickle.dump(namepairidx, pkl)
+
+        if all(os.path.exists(fpath) for fpath in [sans_bc_fq_fpath, sans_bc_paired_fq_fpath, tags_fpath]):
+            log.info('Barcode output found. Skipping barcode detection')
+        else:
+            process_fastqs_func(
+                    arguments,
+                    bc_fq_fpath,
+                    paired_fq_fpath,
+                    sans_bc_fq_fpath,
+                    sans_bc_paired_fq_fpath,
+                    tags_fpath)
+
+    return paired_align_fqs_and_tags_fpaths, namepairidxs
 
 def process_gDNA_fastqs(arguments):
     """
@@ -40,78 +100,50 @@ def process_gDNA_fastqs(arguments):
 
     if not os.path.exists(arguments.output_dir):
         os.makedirs(arguments.output_dir)
-
-    paired_fpaths = misc.find_paired_fastqs_in_dir(arguments.fastq_dir)
-    log.info('Files to process:')
-    for i, (fpath1, fpath2) in enumerate(paired_fpaths):
-        log.info(f'  {fpath1}')
-        log.info(f'  {fpath2}')
-        if i < len(paired_fpaths)-1:
-            log.info('  -')
-
     # find barcodes, write to file, remove from reads before mapping
     # map reads
     # Add barcodes etc to bam file
     # Sort, index
     if completed < 1:
-        bc_fq_idx, paired_fq_idx = misc.determine_bc_and_paired_fastq_idxs(paired_fpaths, arguments.config)
-        log.info(f'Detected barcodes in read{bc_fq_idx+1} files')
         log.info('Writing output to:')
         log.info(f'  {star_w_bc_fpath}')
     
-        paired_align_fqs_and_tags_fpaths = []
-        process_fastqs_func = serial_process_gDNA_fastqs if arguments.threads == 1 else parallel_process_gDNA_fastqs
-        for fpath_tup in paired_fpaths:
-            bc_fq_fpath = fpath_tup[bc_fq_idx]
-            paired_fq_fpath = fpath_tup[paired_fq_idx]
-            sans_bc_fq_fname = f'sans_bc_{misc.file_prefix_from_fpath(bc_fq_fpath)}.fq'
-            sans_bc_fq_fpath = os.path.join(arguments.output_dir, sans_bc_fq_fname)
-            sans_bc_paired_fq_fname = f'sans_paired_{misc.file_prefix_from_fpath(paired_fq_fpath)}.fq'
-            sans_bc_paired_fq_fpath = os.path.join(arguments.output_dir, sans_bc_paired_fq_fname)
-            tags_fname = f'rec_names_and_tags_{misc.file_prefix_from_fpath(bc_fq_fpath)}.txt'
-            tags_fpath = os.path.join(arguments.output_dir, tags_fname)
-            if bc_fq_idx == 0:
-                paired_align_fqs_and_tags_fpaths.append((sans_bc_fq_fpath, sans_bc_paired_fq_fpath, tags_fpath))
-            else:
-                paired_align_fqs_and_tags_fpaths.append((sans_bc_paired_fq_fpath, sans_bc_fq_fpath, tags_fpath))
+        if not arguments.star_output_path:
+            paired_align_fqs_and_tags_fpaths, namepairidxs = preprocess_gDNA_fastqs(arguments)
 
-            log.info('Processing files:')
-            log.info(f'  barcode fastq: {bc_fq_fpath}')
-            log.info(f'  paired fastq:  {paired_fq_fpath}')
-            log.info(f'  sans-bc fastq: {sans_bc_fq_fpath}')
-            log.info(f'  sans-bc fastq: {sans_bc_paired_fq_fpath}')
-            log.info(f'  tags file:     {tags_fpath}')
-            if all(os.path.exists(fpath) for fpath in [sans_bc_fq_fpath, sans_bc_paired_fq_fpath, tags_fpath]):
-                log.info('Barcode output found. Skipping barcode detection')
-            else:
-                process_fastqs_func(
-                        arguments, 
-                        bc_fq_fpath, 
-                        paired_fq_fpath, 
-                        sans_bc_fq_fpath,
-                        sans_bc_paired_fq_fpath, 
-                        tags_fpath)
+            log.info(f'Running STAR alignment...')
+            star_out_dirs = set()
+            star_bam_and_tags_fpaths = []
+            for R1_fpath, R2_fpath, tags_fpath in paired_align_fqs_and_tags_fpaths:
+                log.info(f'  {R1_fpath}')
+                log.info(f'  {R2_fpath}')
+                if R1_fpath != paired_align_fqs_and_tags_fpaths[-1][0]:
+                    log.info('  -')
+                star_out_dir, star_out_fpath = run_STAR_gDNA(arguments, R1_fpath, R2_fpath)
+                star_out_dirs.add(star_out_dir)
+                star_bam_and_tags_fpaths.append((star_out_fpath, tags_fpath))
+        else:
+            log.info(f'Using STAR results from {arguments.star_output_path}')
+            tag_fpaths = glob(os.path.join(arguments.fastq_dir, "rec_names_and_tags_*.txt"))
+            namepairidx_fpaths = glob(os.path.join(arguments.fastq_dir, "rec_names_and_tags_*.pkl"))
 
-        log.info(f'Running STAR alignment...')
-        star_out_dirs = set()
-        star_bam_and_tags_fpaths = []
-        for R1_fpath, R2_fpath, tags_fpath in paired_align_fqs_and_tags_fpaths:
-            log.info(f'  {R1_fpath}')
-            log.info(f'  {R2_fpath}')
-            if R1_fpath != paired_align_fqs_and_tags_fpaths[-1][0]:
-                log.info('  -')
-            star_out_dir, star_out_fpath = run_STAR_gDNA(arguments, R1_fpath, R2_fpath)
-            star_out_dirs.add(star_out_dir)
-            star_bam_and_tags_fpaths.append((star_out_fpath, tags_fpath))
+            star_bam_and_tags_fpaths = [(bam, fpath) for bam, fpath in zip(arguments.star_output_path, sorted(fpaths))]
+            namepairidxs = [pickle.load(open(fpath, "rb")) for fpath in sorted(namepairidx_fpaths)]
 
         log.info('Adding barcode tags to mapped reads...')
         template_bam_fpath = star_bam_and_tags_fpaths[0][0]
         with pysam.AlignmentFile(star_w_bc_fpath, 'wb', template=pysam.AlignmentFile(template_bam_fpath)) as bam_out:
-            for star_out_fpath, tags_fpath in star_bam_and_tags_fpaths:
-                for read in gDNA_add_tags_to_reads(tags_fpath, star_out_fpath):
+            for (star_out_fpath, tags_fpath), namepairidx in zip(star_bam_and_tags_fpaths, namepairidxs):
+                if arguments.threads == 1 and not arguments.star_output_path:
+                    readsiter = iter(serial_gDNA_add_tags_to_reads(tags_fpath, star_out_fpath))
+                else:
+                    readsiter = iter(parallel_gDNA_add_tags_to_reads(tags_fpath, star_out_fpath, namepairidx, arguments.threads))
+                for read in readsiter:
                     bam_out.write(read)
-        for fpath in (sans_bc_fq_fpath, sans_bc_paired_fq_fpath, tags_fpath):
-            os.remove(fpath)
+
+        for fpaths in paired_align_fqs_and_tags_fpaths:
+            for fpath in fpaths:
+                os.remove(fpath)
         for star_out_dir in star_out_dirs:
             shutil.rmtree(star_out_dir)  # clean up intermediate STAR files
     
@@ -137,7 +169,7 @@ def run_STAR_gDNA(arguments, R1_fpath, R2_fpath):
     out_prefix = os.path.join(star_out_dir, f'{R1_bname}_')
     cmd_star = [
         'STAR',
-        f'--runThreadN 1', # required to keep order matching with fastq file
+        f'--runThreadN {arguments.threads}',
         f'--genomeDir {arguments.star_ref_dir}',
         f'--readFilesIn {R1_fpath} {R2_fpath}',
         f'--outFileNamePrefix {out_prefix}',
@@ -212,19 +244,33 @@ def build_tags_iter(tags_fpath):
         yield read_name, tags
 
 
-def gDNA_add_tags_to_reads(tags_fpath, bam_fpath):
+def serial_gDNA_add_tags_to_reads(tags_fpath, bam_fpath):
     """
     Iterates bam reads and matching tags records and adds tags to reads.
     """
     tags_iter = build_tags_iter(tags_fpath)
     read_name = 'Lorem ipsum'
     for read in pysam.AlignmentFile(bam_fpath).fetch(until_eof=True):
-        while not misc.names_pair(read_name, str(read.qname)):
+        while not misc.names_pair(read_name, str(read.query_name)):
             read_name, tags = next(tags_iter)
         for name, val in tags:
             read.set_tag(name, val)
         yield read
 
+def parallel_gDNA_add_tags_to_reads(tags_fpath, bam_fpath, namepairidx, threads):
+    """
+    Iterates bam reads and matching tags records and adds tags to reads.
+    """
+    sortedbampath = bam_fpath + "_readname_sorted.bam"
+    bamidx = misc.sort_and_index_readname_bam(bam_fpath, sortedbampath, namepairidx, threads)
+    tags_iter = build_tags_iter(tags_fpath)
+    with pysam.AlignmentFile(sortedbampath) as bam:
+        for read_name, tags in tags_iter:
+            for read in misc.get_bam_read_by_name(read_name, bam, bamidx):
+                for name, val in tags:
+                    read.set_tag(name, val)
+                yield read
+    os.remove(sortedbampath)
 
 def tag_type_from_val(val):
     if isinstance(val, str):
