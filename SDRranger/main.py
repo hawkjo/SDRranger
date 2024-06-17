@@ -29,10 +29,11 @@ Options:
   --version                       Show version.
 
 Commands:
-  preprocess_gDNA  Preprocess Genomic gDNA files such that STAR can be run on the output.
+  preprocess_gDNA  Preprocess Genomic gDNA files such that STAR can be run on the output
   count_gDNA       Process and count Genomic gDNA files
   count_RNA        Process and count Transcriptomic RNA files
   count_matrix     Build a count matrix (or matrices) from an existing bam file
+  simulate_reads   Generate synthetic sequencing reads given a barcode configuration
 """
 import logging
 import os
