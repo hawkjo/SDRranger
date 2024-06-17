@@ -34,7 +34,7 @@ if __name__ == '__main__':
             "docopt-ng",
             "biopython==1.79",
             "matplotlib>=3.5.2",
-            "pysam>=0.21.0",
+            "pysam>=0.21.0 @ git+https://github.com/ilia-kats/pysam.git@1.20",
             "scipy>=1.10.1",
             "freebarcodes>=3.1.0",
             "pywfa @ git+https://github.com/kcleal/pywfa.git@master"
