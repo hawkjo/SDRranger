@@ -195,7 +195,7 @@ def process_bc_rec_and_p_read(config, bc_rec, p_read, aligners, decoders):
                 bam_commonseqs.append(commonseqs[commonseq_idx])
                 commonseq_idx += 1
             else:
-                if block["blocktype"] == "UMI":
+                if block["blockfunction"] == "UMI":
                     bam_umis.append(new_pieces[i])
                 else:
                     bam_bcs.append(new_pieces[i])

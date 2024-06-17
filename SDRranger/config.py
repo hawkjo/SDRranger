@@ -6,7 +6,7 @@ from .misc import gzip_friendly_open
 
 class CommandLineArguments:
     def __new__(cls, arguments):
-        if "simulate_reads" in arguments:
+        if arguments["simulate_reads"]:
             return SimulationCommandLineArguments(arguments)
         else:
             return AnalysisCommandLineArguments(arguments)
