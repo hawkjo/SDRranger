@@ -63,6 +63,8 @@ def write_stats_file_from_cntr(cntr, fpath):
             log.info(s)
             out.write(s + '\n')
 
+def config_has_barcodes_on_both_reads(config):
+    return "barcode_struct_r2" in config and "blocks" in config["barcode_struct_r2"] and len(config["barcode_struct_r2"]["blocks"])
 
 def find_paired_fastqs_in_dir(fq_dir):
     raw_prompts = ['*.fastq', '*.fq', '*.txt']

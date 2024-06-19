@@ -1,7 +1,6 @@
 import logging
 import pysam
-from .RNAcount import RNA_count_matrix
-from .gDNAcount import gDNA_count_matrix 
+from .count import count_matrix
 
 log = logging.getLogger(__name__)
 pysam.set_verbosity(0)
