@@ -1,6 +1,6 @@
 #!/bin/sh
 SDRranger \
-count_RNA \
+count \
 cDNA_fastqs \
 --STAR-ref-dir=SDR001_REF_index \
 --config=cDNA.json \

@@ -2,10 +2,9 @@
 SDRranger: Process SDR-seq data 
 
 Usage:
-  SDRranger count_RNA        <fastq_dir> (--STAR-ref-dir=<> | --STAR-output=<>...) --config=<> [--output-dir=<>] [--threads=<>] [-v | -vv | -vvv]
-  SDRranger count_gDNA       <fastq_dir> (--STAR-ref-dir=<> | --STAR-output=<>...) --config=<> [--output-dir=<>] [--threads=<>] [-v | -vv | -vvv]
-  SDRranger preprocess_gDNA  <fastq_dir> --config=<> [--output-dir=<>] [--threads=<>] [-v | -vv | -vvv]
-  SDRranger count_matrix       <SDR_bam_file> --output-dir=<> [--threads=<>] [-v | -vv | -vvv]
+  SDRranger count            <fastq_dir> (--STAR-ref-dir=<> | --STAR-output=<>...) --config=<> [--output-dir=<>] [--threads=<>] [-v | -vv | -vvv]
+  SDRranger preprocess       <fastq_dir> --config=<> [--output-dir=<>] [--threads=<>] [-v | -vv | -vvv]
+  SDRranger count_matrix     <SDR_bam_file> --output-dir=<> [--threads=<>] [-v | -vv | -vvv]
   SDRranger simulate_reads   --config=<> --fastq-prefix=<> --nreads=<> [--unique-umis=<>] [--seed=<>] [--error-probability=<>] [--substitution-probability=<>] [--insertion-probability=<>] [-v | -vv | -vvv]
 
 Options:
@@ -29,19 +28,17 @@ Options:
   --version                       Show version.
 
 Commands:
-  preprocess_gDNA  Preprocess Genomic gDNA files such that STAR can be run on the output
-  count_gDNA       Process and count Genomic gDNA files
-  count_RNA        Process and count Transcriptomic RNA files
-  count_matrix     Build a count matrix (or matrices) from an existing bam file
-  simulate_reads   Generate synthetic sequencing reads given a barcode configuration
+  preprocess       Preprocess files such that STAR can be run on the output.
+  count            Process and count input files.
+  count_matrix     Build a count matrix (or matrices) from an existing bam file.
+  simulate_reads   Generate synthetic sequencing reads given a barcode configuration.
 """
 import logging
 import os
 from docopt import docopt
 from .__init__ import __version__
 from .config import CommandLineArguments
-from .RNAcount import process_RNA_fastqs
-from .gDNAcount import process_gDNA_fastqs, preprocess_gDNA_fastqs
+from .count import process_fastqs, preprocess_fastqs
 from .count_matrix import build_count_matrices_from_bam
 from .simulate import simulate_reads
 
@@ -58,9 +55,8 @@ def main(**kwargs):
     log.debug(docopt_args)
 
     commands = {
-        'count_RNA': process_RNA_fastqs,
-        'count_gDNA': process_gDNA_fastqs,
-        'preprocess_gDNA': preprocess_gDNA_fastqs,
+        'count': process_fastqs,
+        'preprocess': preprocess_fastqs,
         'count_matrix': build_count_matrices_from_bam,
         'simulate_reads': simulate_reads
     }

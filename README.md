@@ -22,11 +22,9 @@ This typically takes a few minutes.
 
 The basic usage for SDRranger can be displayed at any time via `SDRranger --help`:
 ```
-Usage:
-  SDRranger count_RNA        <fastq_dir> (--STAR-ref-dir=<> | --STAR-output=<>...) --config=<> [--output-dir=<>] [--threads=<>] [-v | -vv | -vvv]
-  SDRranger count_gDNA       <fastq_dir> (--STAR-ref-dir=<> | --STAR-output=<>...) --config=<> [--output-dir=<>] [--threads=<>] [-v | -vv | -vvv]
-  SDRranger preprocess_gDNA  <fastq_dir> --config=<> [--output-dir=<>] [--threads=<>] [-v | -vv | -vvv]
-  SDRranger count_matrix       <SDR_bam_file> --output-dir=<> [--threads=<>] [-v | -vv | -vvv]
+  SDRranger count            <fastq_dir> (--STAR-ref-dir=<> | --STAR-output=<>...) --config=<> [--output-dir=<>] [--threads=<>] [-v | -vv | -vvv]
+  SDRranger preprocess       <fastq_dir> --config=<> [--output-dir=<>] [--threads=<>] [-v | -vv | -vvv]
+  SDRranger count_matrix     <SDR_bam_file> --output-dir=<> [--threads=<>] [-v | -vv | -vvv]
   SDRranger simulate_reads   --config=<> --fastq-prefix=<> --nreads=<> [--unique-umis=<>] [--seed=<>] [--error-probability=<>] [--substitution-probability=<>] [--insertion-probability=<>] [-v | -vv | -vvv]
 
 Options:
@@ -50,14 +48,11 @@ Options:
   --version                       Show version.
 
 Commands:
-  preprocess_gDNA  Preprocess Genomic gDNA files such that STAR can be run on the output
-  count_gDNA       Process and count Genomic gDNA files
-  count_RNA        Process and count Transcriptomic RNA files
-  count_matrix     Build a count matrix (or matrices) from an existing bam file
-  simulate_reads   Generate synthetic sequencing reads given a barcode configuration
+  preprocess       Preprocess files such that STAR can be run on the output.
+  count            Process and count input files.
+  count_matrix     Build a count matrix (or matrices) from an existing bam file.
+  simulate_reads   Generate synthetic sequencing reads given a barcode configuration.
 ```
-As this shows, the typical workflow is performed on data separated into gDNA and RNA fastq files, as these two filetypes have different barcode structures and semantics, and require different handling.
-
 The barcode details are input via a json configuration file, of which standard gDNA and RNA versions can be found in the `examples` folder. 
 
 STAR references need to be prebuilt and their top directory input as a parameter.
@@ -66,7 +61,7 @@ STAR references need to be prebuilt and their top directory input as a parameter
 The primary outputs from SDR ranger are:
 * An annotated BAM file
 * A read count matrix
-* A UMI count matrix (for RNA)
+* A UMI count matrix
 
 #### BAM file tags
 The BAM file is annotated with custom tags that have been created in the style of current community standards. These are:

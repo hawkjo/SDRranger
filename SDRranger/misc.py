@@ -63,6 +63,8 @@ def write_stats_file_from_cntr(cntr, fpath):
             log.info(s)
             out.write(s + '\n')
 
+def config_has_barcodes_on_both_reads(config):
+    return "barcode_struct_r2" in config and "blocks" in config["barcode_struct_r2"] and len(config["barcode_struct_r2"]["blocks"])
 
 def find_paired_fastqs_in_dir(fq_dir):
     raw_prompts = ['*.fastq', '*.fq', '*.txt']
@@ -112,19 +114,19 @@ def file_prefix_from_fpath(fpath):
     return os.path.basename(bname)
 
 
-def determine_bc_and_paired_fastq_idxs(paired_fpaths, config):
+def determine_bc_and_paired_fastq_idxs(paired_fpaths, blocks, unknown_read_orientation):
     """Returns (bc_fq_idx, paired_fq_idx), based on first pair of fastqs"""
     fpath0, fpath1 = paired_fpaths[0]
-    avg_score0 = average_align_score_of_first_recs(fpath0, config)
-    avg_score1 = average_align_score_of_first_recs(fpath1, config)
+    avg_score0 = average_align_score_of_first_recs(fpath0, blocks, unknown_read_orientation)
+    avg_score1 = average_align_score_of_first_recs(fpath1, blocks, unknown_read_orientation)
     return (0, 1) if avg_score0 > avg_score1 else (1, 0)
 
-def build_bc_aligners(config):
+def build_bc_aligners(blocks, unknown_read_orientation):
     from .bc_aligner import CustomBCAligner
 
     naligners = []
     barcodelengths = []
-    for i, block in enumerate(config["barcode_struct_r1"]["blocks"]):
+    for i, block in enumerate(blocks):
         if block["blocktype"] == "constantRegion":
             naligners.append(block["sequence"])
             barcodelengths.append(None)
@@ -143,16 +145,15 @@ def build_bc_aligners(config):
             else:
                 prefixes.append(aln[alnidx])
                 alnidx += 1
-        aligners.append(CustomBCAligner(*prefixes, unknown_read_orientation=config["unknown_read_orientation"]))
+        aligners.append(CustomBCAligner(*prefixes, unknown_read_orientation=unknown_read_orientation))
     return aligners
 
-def build_bc_decoders(config):
+def build_bc_decoders(blocks):
     from .bc_decoders import BCDecoder, SBCDecoder
 
     decoders = []
     lastblock = None
     lastblockidx = -1
-    blocks = config["barcode_struct_r1"]["blocks"]
     for i, block in enumerate(blocks):
         if block["blocktype"] == "barcodeList":
             if lastblock is not None:
@@ -166,9 +167,9 @@ def build_bc_decoders(config):
             decoders.append(BCDecoder(lastblock["sequence"], lastblock["maxerrors"]))
     return decoders
 
-def average_align_score_of_first_recs(fastq_fpath, config, n_seqs=500):
+def average_align_score_of_first_recs(fastq_fpath, blocks, unknown_read_orientation, n_seqs=500):
     """Return average alignment score of first n_seqs records"""
-    aligners = build_bc_aligners(config)
+    aligners = build_bc_aligners(blocks, unknown_read_orientation)
     first_scores = []
     for i, rec in enumerate(SeqIO.parse(gzip_friendly_open(fastq_fpath), 'fastq')):
         scores_and_pieces = [al.find_norm_score_and_pieces(rec.seq) for al in aligners]

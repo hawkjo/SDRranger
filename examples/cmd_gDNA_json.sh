@@ -1,6 +1,6 @@
 #!/bin/sh
 SDRranger \
-count_gDNA \
+count \
 gDNA_fastqs \
 --STAR-ref-dir=SDR001_REF_index \
 --config=gDNA.json.gz \
