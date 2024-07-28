@@ -30,7 +30,7 @@ if __name__ == '__main__':
         },
         include_package_data=True,
         install_requires=[
-            "numpy>=1.20.0",
+            "numpy>=1.20.0,<2.0.0",
             "docopt-ng",
             "biopython==1.79",
             "matplotlib>=3.5.2",
