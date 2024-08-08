@@ -29,7 +29,7 @@ class CommandLineArgumentsBase:
     @property
     def command(self):
         # We have to do this weird loop to deal with the way docopt stores the command name
-        for possible_command in ('count_gDNA', 'preprocess_gDNA', 'count_RNA', 'count_matrix', 'simulate_reads'):
+        for possible_command in ('count', 'preprocess', 'count_matrix', 'simulate_reads'):
             if self._arguments.get(possible_command):
                 return possible_command
     @property
