@@ -1,7 +1,7 @@
 # SDRranger
-A tool for processing SDR-seq (targeted Single-cell DNA and RNA sequencing) fastq files into annotated BAM files and count matrices.
-
 [![DOI](https://zenodo.org/badge/716143278.svg)](https://doi.org/10.5281/zenodo.14762617)
+
+A tool for processing SDR-seq (targeted Single-cell DNA and RNA sequencing) fastq files into annotated BAM files and count matrices.
 
 <p align="center">
   <img src="doc/SDRLoneRanger.png" width=50% alt="The Single-Cell DNA RNA Lone Ranger">
